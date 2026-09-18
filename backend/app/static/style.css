@@ -248,3 +248,180 @@ footer {
         padding: 14px 18px;
     }
 }
+.result-type {
+    margin-bottom: 8px;
+    color: var(--primary-light);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+}
+
+.result-author {
+    margin: 8px 0;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+.result-description {
+    color: #4b5563;
+    line-height: 1.6;
+}
+
+.detail-button {
+    margin-top: 12px;
+    border: 0;
+    background: transparent;
+    color: var(--primary-light);
+    padding: 0;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.detail-button:hover {
+    text-decoration: underline;
+}
+.detail-page {
+    display: grid;
+    gap: 22px;
+}
+
+.back-button {
+    justify-self: start;
+    border: 0;
+    background: transparent;
+    color: var(--primary-light);
+    padding: 0;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.back-button:hover {
+    text-decoration: underline;
+}
+
+.detail-hero {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 30px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.detail-hero h2 {
+    margin: 5px 0 8px;
+    color: var(--primary);
+    font-size: 32px;
+}
+
+.detail-original-title {
+    color: var(--muted);
+    font-size: 17px;
+    margin-bottom: 18px;
+}
+
+.detail-authors {
+    font-size: 19px;
+    font-weight: 600;
+    margin-bottom: 12px;
+}
+
+.detail-description {
+    max-width: 800px;
+    line-height: 1.7;
+    color: #4b5563;
+}
+
+.detail-content {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 30px;
+}
+
+.detail-content > h2 {
+    margin-top: 0;
+    color: var(--primary);
+}
+
+.detail-expression {
+    margin-top: 18px;
+    padding: 20px;
+    background: #f8fafc;
+    border-left: 4px solid var(--primary-light);
+    border-radius: 6px 10px 10px 6px;
+}
+
+.expression-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.expression-header h3 {
+    margin: 0;
+}
+
+.language-badge {
+    background: var(--primary);
+    color: white;
+    border-radius: 20px;
+    padding: 4px 9px;
+    font-size: 12px;
+}
+
+.detail-manifestation {
+    margin-top: 18px;
+    padding: 18px;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+
+.detail-manifestation h4 {
+    margin: 0 0 8px;
+    color: var(--primary);
+}
+
+.publication-title {
+    font-size: 16px;
+}
+
+.detail-item {
+    margin-top: 16px;
+    background: #f5f7fa;
+    padding: 16px;
+    border-radius: 8px;
+}
+
+.detail-item-title {
+    font-weight: 700;
+    margin-bottom: 12px;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns:
+        repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.detail-grid div {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.detail-grid span {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.detail-grid strong {
+    font-size: 14px;
+}
+
+.empty-detail {
+    color: var(--muted);
+}

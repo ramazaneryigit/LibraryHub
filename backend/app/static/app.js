@@ -3,6 +3,11 @@ const searchInput = document.getElementById("search-input");
 const statusBox = document.getElementById("status");
 const resultsBox = document.getElementById("results");
 
+
+/* ---------------------------------------------------------
+   GÜVENLİ HTML
+--------------------------------------------------------- */
+
 function escapeHtml(value) {
     if (value === null || value === undefined) {
         return "";
@@ -16,20 +21,215 @@ function escapeHtml(value) {
         .replaceAll("'", "&#039;");
 }
 
-function renderAgents(agents) {
-    if (!agents || agents.length === 0) {
-        return "";
-    }
 
-    return agents.map(agent => `
-        <span class="tag">
-            ${escapeHtml(agent.name)}
-            ${agent.role ? ` · ${escapeHtml(agent.role)}` : ""}
-        </span>
-    `).join("");
+/* ---------------------------------------------------------
+   ARAMA SONUCU KARTI
+--------------------------------------------------------- */
+
+function renderWork(work) {
+    const authors = work.authors || [];
+    const subjects = work.subjects || [];
+
+    const authorNames = authors.length
+        ? authors
+            .map(author => escapeHtml(author.name))
+            .join(", ")
+        : "Yazar bilgisi yok";
+
+    const subjectTags = subjects
+        .map(subject => `
+            <span class="tag">
+                ${escapeHtml(subject.label)}
+            </span>
+        `)
+        .join("");
+
+    return `
+        <article class="result-card">
+
+            <div class="result-type">
+                ESER
+            </div>
+
+            <h3>
+                ${escapeHtml(work.canonical_title)}
+            </h3>
+
+            ${
+                work.original_title
+                    ? `
+                        <div class="original-title">
+                            ${escapeHtml(work.original_title)}
+                        </div>
+                      `
+                    : ""
+            }
+
+            <p class="result-author">
+                ${authorNames}
+            </p>
+
+            <div class="metadata">
+
+                ${subjectTags}
+
+                ${
+                    work.original_language
+                        ? `
+                            <span class="tag">
+                                Özgün dil:
+                                ${escapeHtml(work.original_language)}
+                            </span>
+                          `
+                        : ""
+                }
+
+            </div>
+
+            ${
+                work.description
+                    ? `
+                        <p class="result-description">
+                            ${escapeHtml(work.description)}
+                        </p>
+                      `
+                    : ""
+            }
+
+            <button
+                type="button"
+                class="detail-button"
+                data-work-id="${escapeHtml(work.entity_id)}"
+            >
+                Kaydı görüntüle →
+            </button>
+
+        </article>
+    `;
 }
 
-function renderItems(items) {
+
+/* ---------------------------------------------------------
+   ARAMA
+--------------------------------------------------------- */
+
+async function performSearch(query) {
+    const cleanQuery = query.trim();
+
+    if (!cleanQuery) {
+        statusBox.textContent =
+            "Lütfen bir arama terimi girin.";
+
+        resultsBox.innerHTML = "";
+        return;
+    }
+
+    searchInput.value = cleanQuery;
+
+    statusBox.textContent =
+        `"${cleanQuery}" aranıyor...`;
+
+    resultsBox.innerHTML = "";
+
+    try {
+
+        const response = await fetch(
+            `/search?q=${encodeURIComponent(cleanQuery)}`
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                `HTTP ${response.status}`
+            );
+        }
+
+        const data = await response.json();
+
+        if (
+            !data.results ||
+            data.results.length === 0
+        ) {
+            statusBox.textContent =
+                `"${cleanQuery}" için sonuç bulunamadı.`;
+
+            return;
+        }
+
+        statusBox.textContent =
+            `${data.count} kayıt bulundu.`;
+
+        resultsBox.innerHTML =
+            data.results
+                .map(renderWork)
+                .join("");
+
+    } catch (error) {
+
+        console.error(
+            "LibraryHub arama hatası:",
+            error
+        );
+
+        statusBox.textContent =
+            "Arama sırasında bir hata oluştu.";
+
+        resultsBox.innerHTML = `
+            <div class="result-card">
+                API bağlantısı kurulamadı.
+            </div>
+        `;
+    }
+}
+
+
+/* ---------------------------------------------------------
+   ARAMA FORMU
+--------------------------------------------------------- */
+
+searchForm.addEventListener(
+    "submit",
+    event => {
+
+        event.preventDefault();
+
+        performSearch(
+            searchInput.value
+        );
+    }
+);
+
+
+/* ---------------------------------------------------------
+   ÖRNEK ARAMA BUTONLARI
+--------------------------------------------------------- */
+
+document
+    .querySelectorAll("[data-query]")
+    .forEach(button => {
+
+        button.addEventListener(
+            "click",
+            () => {
+
+                performSearch(
+                    button.dataset.query
+                );
+            }
+        );
+
+    });
+
+
+/* ---------------------------------------------------------
+   KAYDI GÖRÜNTÜLE
+   Şimdilik ID'yi konsola yazıyoruz.
+   Sonraki aşamada gerçek detay ekranını açacağız.
+--------------------------------------------------------- */
+/* ---------------------------------------------------------
+   ESER DETAYI
+--------------------------------------------------------- */
+
+function renderDetailItems(items) {
     if (!items || items.length === 0) {
         return "";
     }
@@ -38,32 +238,49 @@ function renderItems(items) {
         const institutions = item.holding_institutions || [];
 
         return `
-            <div class="item">
-                <strong>Nüsha</strong><br>
+            <div class="detail-item">
+                <div class="detail-item-title">Kütüphane nüshası</div>
 
-                ${item.barcode
-                    ? `Barkod: ${escapeHtml(item.barcode)}<br>`
-                    : ""}
+                <div class="detail-grid">
+                    ${item.barcode ? `
+                        <div>
+                            <span>Barkod</span>
+                            <strong>${escapeHtml(item.barcode)}</strong>
+                        </div>
+                    ` : ""}
 
-                ${item.shelfmark
-                    ? `Yer numarası: ${escapeHtml(item.shelfmark)}<br>`
-                    : ""}
+                    ${item.shelfmark ? `
+                        <div>
+                            <span>Yer numarası</span>
+                            <strong>${escapeHtml(item.shelfmark)}</strong>
+                        </div>
+                    ` : ""}
 
-                ${item.availability_status
-                    ? `Durum: ${escapeHtml(item.availability_status)}<br>`
-                    : ""}
+                    ${item.availability_status ? `
+                        <div>
+                            <span>Durum</span>
+                            <strong>${escapeHtml(item.availability_status)}</strong>
+                        </div>
+                    ` : ""}
 
-                ${institutions.length
-                    ? `Kütüphane: ${institutions
-                        .map(i => escapeHtml(i.name))
-                        .join(", ")}`
-                    : ""}
+                    ${institutions.length ? `
+                        <div>
+                            <span>Kurum</span>
+                            <strong>
+                                ${institutions
+                                    .map(i => escapeHtml(i.name))
+                                    .join(", ")}
+                            </strong>
+                        </div>
+                    ` : ""}
+                </div>
             </div>
         `;
     }).join("");
 }
 
-function renderManifestations(manifestations) {
+
+function renderDetailManifestations(manifestations) {
     if (!manifestations || manifestations.length === 0) {
         return "";
     }
@@ -72,190 +289,259 @@ function renderManifestations(manifestations) {
         const publishers = manifestation.publishers || [];
 
         return `
-            <div class="manifestation">
+            <div class="detail-manifestation">
 
-                <strong>Yayım / Manifestation</strong>
+                <h4>Yayım</h4>
 
-                <p>
-                    ${manifestation.publication_statement
-                        ? escapeHtml(manifestation.publication_statement)
-                        : "Yayım bilgisi belirtilmemiş"}
-                </p>
+                ${manifestation.publication_statement ? `
+                    <p class="publication-title">
+                        ${escapeHtml(manifestation.publication_statement)}
+                    </p>
+                ` : ""}
 
                 <div class="metadata">
+                    ${manifestation.publication_date ? `
+                        <span class="tag">
+                            ${escapeHtml(manifestation.publication_date)}
+                        </span>
+                    ` : ""}
 
-                    ${manifestation.publication_date
-                        ? `<span class="tag">${escapeHtml(manifestation.publication_date)}</span>`
-                        : ""}
+                    ${manifestation.edition_statement ? `
+                        <span class="tag">
+                            ${escapeHtml(manifestation.edition_statement)}
+                        </span>
+                    ` : ""}
 
-                    ${manifestation.edition_statement
-                        ? `<span class="tag">${escapeHtml(manifestation.edition_statement)}</span>`
-                        : ""}
+                    ${manifestation.carrier_type ? `
+                        <span class="tag">
+                            ${escapeHtml(manifestation.carrier_type)}
+                        </span>
+                    ` : ""}
 
-                    ${manifestation.carrier_type
-                        ? `<span class="tag">${escapeHtml(manifestation.carrier_type)}</span>`
-                        : ""}
-
-                    ${manifestation.extent
-                        ? `<span class="tag">${escapeHtml(manifestation.extent)}</span>`
-                        : ""}
-
+                    ${manifestation.extent ? `
+                        <span class="tag">
+                            ${escapeHtml(manifestation.extent)}
+                        </span>
+                    ` : ""}
                 </div>
 
-                ${publishers.length
-                    ? `<p><strong>Yayıncı:</strong>
+                ${publishers.length ? `
+                    <p>
+                        <strong>Yayıncı:</strong>
                         ${publishers
                             .map(p => escapeHtml(p.name))
                             .join(", ")}
-                       </p>`
-                    : ""}
+                    </p>
+                ` : ""}
 
-                ${renderItems(manifestation.items)}
-
+                ${renderDetailItems(manifestation.items)}
             </div>
         `;
     }).join("");
 }
 
-function renderExpressions(expressions) {
+
+function renderDetailExpressions(expressions) {
     if (!expressions || expressions.length === 0) {
-        return "";
+        return `
+            <p class="empty-detail">
+                Bu eser için Expression kaydı bulunmuyor.
+            </p>
+        `;
     }
 
-    return expressions.map(expression => `
-        <div class="expression">
+    return expressions.map(expression => {
+        const agents = expression.agents || [];
 
-            <strong>Expression</strong>
+        return `
+            <div class="detail-expression">
 
-            <div class="metadata">
-                ${expression.language
-                    ? `<span class="tag">Dil: ${escapeHtml(expression.language)}</span>`
-                    : ""}
+                <div class="expression-header">
+                    <h3>Expression</h3>
 
-                ${expression.expression_form
-                    ? `<span class="tag">Biçim: ${escapeHtml(expression.expression_form)}</span>`
-                    : ""}
+                    ${expression.language ? `
+                        <span class="language-badge">
+                            ${escapeHtml(expression.language)}
+                        </span>
+                    ` : ""}
+                </div>
+
+                ${expression.description ? `
+                    <p>${escapeHtml(expression.description)}</p>
+                ` : ""}
+
+                ${expression.expression_form ? `
+                    <p>
+                        <strong>Biçim:</strong>
+                        ${escapeHtml(expression.expression_form)}
+                    </p>
+                ` : ""}
+
+                ${agents.length ? `
+                    <p>
+                        <strong>Katkı sağlayan:</strong>
+                        ${agents.map(agent =>
+                            `${escapeHtml(agent.name)}${
+                                agent.role
+                                    ? ` (${escapeHtml(agent.role)})`
+                                    : ""
+                            }`
+                        ).join(", ")}
+                    </p>
+                ` : ""}
+
+                ${renderDetailManifestations(expression.manifestations)}
             </div>
-
-            ${expression.description
-                ? `<p>${escapeHtml(expression.description)}</p>`
-                : ""}
-
-            ${expression.agents && expression.agents.length
-                ? `
-                    <p><strong>Katkı sağlayan:</strong></p>
-                    <div class="metadata">
-                        ${renderAgents(expression.agents)}
-                    </div>
-                  `
-                : ""}
-
-            ${renderManifestations(expression.manifestations)}
-
-        </div>
-    `).join("");
+        `;
+    }).join("");
 }
 
-function renderWork(work) {
+
+function renderWorkDetail(work) {
     const authors = work.authors || [];
     const subjects = work.subjects || [];
 
     return `
-        <article class="result-card">
+        <div class="detail-page">
 
-            <h3>${escapeHtml(work.canonical_title)}</h3>
+            <button
+                type="button"
+                id="back-to-results"
+                class="back-button"
+            >
+                ← Arama sonuçlarına dön
+            </button>
 
-            ${work.original_title
-                ? `<div class="original-title">
-                    Özgün başlık: ${escapeHtml(work.original_title)}
-                   </div>`
-                : ""}
+            <div class="detail-hero">
 
-            <div class="metadata">
+                <div class="result-type">
+                    ESER
+                </div>
 
-                ${authors.map(author => `
-                    <span class="tag">
-                        Yazar: ${escapeHtml(author.name)}
-                    </span>
-                `).join("")}
+                <h2>
+                    ${escapeHtml(work.canonical_title)}
+                </h2>
 
-                ${subjects.map(subject => `
-                    <span class="tag">
-                        Konu: ${escapeHtml(subject.label)}
-                    </span>
-                `).join("")}
+                ${work.original_title ? `
+                    <div class="detail-original-title">
+                        ${escapeHtml(work.original_title)}
+                    </div>
+                ` : ""}
 
-                ${work.original_language
-                    ? `<span class="tag">
-                        Özgün dil: ${escapeHtml(work.original_language)}
-                       </span>`
-                    : ""}
+                ${authors.length ? `
+                    <div class="detail-authors">
+                        ${authors
+                            .map(author => escapeHtml(author.name))
+                            .join(", ")}
+                    </div>
+                ` : ""}
+
+                <div class="metadata">
+                    ${subjects.map(subject => `
+                        <span class="tag">
+                            ${escapeHtml(subject.label)}
+                        </span>
+                    `).join("")}
+
+                    ${work.original_language ? `
+                        <span class="tag">
+                            Özgün dil:
+                            ${escapeHtml(work.original_language)}
+                        </span>
+                    ` : ""}
+                </div>
+
+                ${work.description ? `
+                    <p class="detail-description">
+                        ${escapeHtml(work.description)}
+                    </p>
+                ` : ""}
 
             </div>
 
-            ${work.description
-                ? `<p>${escapeHtml(work.description)}</p>`
-                : ""}
+            <section class="detail-content">
 
-            <div class="detail-section">
-                <h4>Bibliyografik yapı</h4>
-                ${renderExpressions(work.expressions)}
-            </div>
+                <h2>Sürümler ve yayınlar</h2>
 
-        </article>
+                ${renderDetailExpressions(work.expressions)}
+
+            </section>
+
+        </div>
     `;
 }
 
-async function performSearch(query) {
-    const cleanQuery = query.trim();
 
-    if (!cleanQuery) {
-        return;
-    }
-
-    searchInput.value = cleanQuery;
-
-    statusBox.textContent = `"${cleanQuery}" aranıyor...`;
-    resultsBox.innerHTML = "";
+async function openWorkDetail(workId) {
+    statusBox.textContent = "Eser kaydı yükleniyor...";
 
     try {
         const response = await fetch(
-            `/search?q=${encodeURIComponent(cleanQuery)}`
+            `/works/${encodeURIComponent(workId)}/detail`
         );
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
 
-        const data = await response.json();
+        const work = await response.json();
 
-        if (!data.results || data.results.length === 0) {
-            statusBox.textContent =
-                `"${cleanQuery}" için sonuç bulunamadı.`;
-            return;
-        }
-
-        statusBox.textContent =
-            `${data.count} kayıt bulundu.`;
+        statusBox.textContent = "";
 
         resultsBox.innerHTML =
-            data.results.map(renderWork).join("");
+            renderWorkDetail(work);
+
+        window.scrollTo({
+            top: 0,
+            behavior: "smooth"
+        });
 
     } catch (error) {
-        console.error(error);
+        console.error(
+            "LibraryHub detay hatası:",
+            error
+        );
 
         statusBox.textContent =
-            "Arama sırasında bir hata oluştu. API bağlantısını kontrol edin.";
+            "Eser ayrıntıları yüklenemedi.";
     }
 }
 
-searchForm.addEventListener("submit", event => {
-    event.preventDefault();
-    performSearch(searchInput.value);
-});
 
-document.querySelectorAll("[data-query]").forEach(button => {
-    button.addEventListener("click", () => {
-        performSearch(button.dataset.query);
-    });
-});
+/* ---------------------------------------------------------
+   SONUÇ / DETAY TIKLAMALARI
+--------------------------------------------------------- */
+
+let lastSearchQuery = "";
+
+const originalPerformSearch = performSearch;
+
+performSearch = async function(query) {
+    lastSearchQuery = query.trim();
+    return originalPerformSearch(query);
+};
+
+
+resultsBox.addEventListener(
+    "click",
+    event => {
+
+        const detailButton =
+            event.target.closest(".detail-button");
+
+        if (detailButton) {
+            openWorkDetail(
+                detailButton.dataset.workId
+            );
+
+            return;
+        }
+
+        const backButton =
+            event.target.closest("#back-to-results");
+
+        if (backButton && lastSearchQuery) {
+            performSearch(lastSearchQuery);
+        }
+    }
+);
