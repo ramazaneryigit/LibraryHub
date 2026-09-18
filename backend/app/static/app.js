@@ -258,18 +258,25 @@ function renderDetailItems(items) {
                         </div>
                     ` : ""}
 
-                    ${institutions.length ? `
-                        <div>
-                            <span>Kurum</span>
-                            <strong>
-                                ${institutions
-                                    .map(i => escapeHtml(i.name))
-                                    .join(", ")}
-                            </strong>
-                        </div>
-                    ` : ""}
+                    
+					${institutions.length ? `
+						<div>
+						<span>Kurum</span>
+						<strong>
+						${institutions.map(institution => `
+						<button
+						type="button"
+						class="entity-link collective-agent-link"
+						data-agent-id="${escapeHtml(institution.entity_id)}"
+						>
+											${escapeHtml(institution.name)}
+							</button>
+									`).join(", ")}
+										</strong>
+						</div>
+					` : ""}
                 </div>
-            </div>
+            
         `;
     }).join("");
 }
@@ -320,14 +327,22 @@ function renderDetailManifestations(manifestations) {
                     ` : ""}
                 </div>
 
-                ${publishers.length ? `
-                    <p>
-                        <strong>Yayıncı:</strong>
-                        ${publishers
-                            .map(p => escapeHtml(p.name))
-                            .join(", ")}
-                    </p>
-                ` : ""}
+                
+				${publishers.length ? `
+					<p>
+						<strong>Yayıncı:</strong>
+
+						${publishers.map(publisher => `
+							<button
+							type="button"
+							class="entity-link collective-agent-link"
+							data-agent-id="${escapeHtml(publisher.entity_id)}"
+							>
+						${escapeHtml(publisher.name)}
+							</button>
+							`).join(", ")}
+					</p>
+				` : ""}
 
                 ${renderDetailItems(manifestation.items)}
             </div>
@@ -741,7 +756,130 @@ async function openPerson(personId) {
     }
 }
 
+async function openCollectiveAgent(agentId) {
+    statusBox.textContent = "Kurum kaydı yükleniyor...";
+    resultsBox.innerHTML = "";
 
+    try {
+        const response = await fetch(
+            `/collective-agents/${encodeURIComponent(agentId)}/works`
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const agent = await response.json();
+
+        statusBox.textContent = "";
+
+        const works = agent.works || [];
+
+        resultsBox.innerHTML = `
+            <div class="detail-page">
+
+                <button
+                    type="button"
+                    class="back-button"
+                    id="back-from-collective-agent"
+                >
+                    ← Önceki görünüme dön
+                </button>
+
+                <div class="detail-hero">
+
+                    <div class="result-type">
+                        KURUM / ORGANİZASYON
+                    </div>
+
+                    <h2>
+                        ${escapeHtml(agent.canonical_name)}
+                    </h2>
+
+                    ${agent.agent_type ? `
+                        <div class="metadata">
+                            <span class="tag">
+                                ${escapeHtml(agent.agent_type)}
+                            </span>
+                        </div>
+                    ` : ""}
+
+                    ${agent.description ? `
+                        <p class="detail-description">
+                            ${escapeHtml(agent.description)}
+                        </p>
+                    ` : ""}
+
+                </div>
+
+                <section class="detail-content">
+
+                    <h2>İlişkili eserler (${works.length})</h2>
+
+                    ${
+                        works.length
+                            ? works.map(entry => `
+                                <article class="person-work-card">
+
+                                    <div class="relation-label">
+                                        ${escapeHtml(
+                                            entry.role || "ilişkili"
+                                        )}
+                                    </div>
+
+                                    <h3>
+                                        ${escapeHtml(
+                                            entry.work.canonical_title
+                                        )}
+                                    </h3>
+
+                                    ${entry.work.original_title ? `
+                                        <div class="original-title">
+                                            ${escapeHtml(
+                                                entry.work.original_title
+                                            )}
+                                        </div>
+                                    ` : ""}
+
+                                    <button
+                                        type="button"
+                                        class="detail-button"
+                                        data-work-id="${escapeHtml(
+                                            entry.work.entity_id
+                                        )}"
+                                    >
+                                        Eseri görüntüle →
+                                    </button>
+
+                                </article>
+                            `).join("")
+                            : `
+                                <p class="empty-detail">
+                                    Bu kurumla ilişkili eser bulunamadı.
+                                </p>
+                              `
+                    }
+
+                </section>
+
+            </div>
+        `;
+
+        window.scrollTo({
+            top: 0,
+            behavior: "smooth"
+        });
+
+    } catch (error) {
+        console.error(
+            "LibraryHub collective agent hatası:",
+            error
+        );
+
+        statusBox.textContent =
+            "Kurum kaydı yüklenemedi.";
+    }
+}
 /* ---------------------------------------------------------
    SONUÇ / DETAY TIKLAMALARI
 --------------------------------------------------------- */
@@ -780,7 +918,13 @@ resultsBox.addEventListener(
             performSearch(lastSearchQuery);
             return;
         }
+		const backFromCollectiveAgent =
+			event.target.closest("#back-from-collective-agent");
 
+		if (backFromCollectiveAgent && lastSearchQuery) {
+			performSearch(lastSearchQuery);
+			return;
+}
         const backFromPerson =
             event.target.closest("#back-from-person");
 
@@ -796,7 +940,16 @@ resultsBox.addEventListener(
             performSearch(lastSearchQuery);
             return;
         }
+		const collectiveAgentButton =
+			event.target.closest(".collective-agent-link");
 
+		if (collectiveAgentButton) {
+			openCollectiveAgent(
+			collectiveAgentButton.dataset.agentId
+		);
+			lastViewType = "collective-agent";
+			return;
+}
         const personButton =
             event.target.closest(".person-link");
 
