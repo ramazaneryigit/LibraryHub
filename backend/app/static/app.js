@@ -441,9 +441,13 @@ function renderWorkDetail(work) {
 
                 <div class="metadata">
                     ${subjects.map(subject => `
-                        <span class="tag">
+                        <button
+                            type="button"
+                            class="tag concept-link"
+                            data-concept-id="${escapeHtml(subject.entity_id)}"
+                        >
                             ${escapeHtml(subject.label)}
-                        </span>
+                        </button>
                     `).join("")}
 
                     ${work.original_language ? `
@@ -507,6 +511,107 @@ async function openWorkDetail(workId) {
 
         statusBox.textContent =
             "Eser ayrıntıları yüklenemedi.";
+    }
+}
+
+
+async function openConcept(conceptId) {
+    statusBox.textContent = "Konsept kaydı yükleniyor...";
+    resultsBox.innerHTML = "";
+
+    try {
+        const response = await fetch(
+            `/search/concept/${encodeURIComponent(conceptId)}`
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        statusBox.textContent = "";
+
+        const concept = data.concept || {};
+        const results = data.results || [];
+
+        resultsBox.innerHTML = `
+            <div class="detail-page">
+
+                <button
+                    type="button"
+                    class="back-button"
+                    id="back-from-concept"
+                >
+                    ← Önceki görünüme dön
+                </button>
+
+                <div class="detail-hero">
+
+                    <div class="result-type">
+                        KONSEPT
+                    </div>
+
+                    <h2>
+                        ${escapeHtml(concept.preferred_label)}
+                    </h2>
+
+                </div>
+
+                <section class="detail-content">
+
+                    <h2>İlişkili eserler (${results.length})</h2>
+
+                    ${
+                        results.length
+                            ? results.map(entry => `
+                                <article class="concept-work-card">
+
+                                    <h3>
+                                        ${escapeHtml(
+                                            entry.canonical_title
+                                        )}
+                                    </h3>
+
+                                    <button
+                                        type="button"
+                                        class="detail-button"
+                                        data-work-id="${
+                                            escapeHtml(
+                                                entry.work_entity_id
+                                            )
+                                        }"
+                                    >
+                                        Eseri görüntüle →
+                                    </button>
+
+                                </article>
+                            `).join("")
+                            : `
+                                <p class="empty-detail">
+                                    Bu konseptle ilişkili eser bulunamadı.
+                                </p>
+                              `
+                    }
+
+                </section>
+
+            </div>
+        `;
+
+        window.scrollTo({
+            top: 0,
+            behavior: "smooth"
+        });
+
+    } catch (error) {
+        console.error(
+            "LibraryHub konsept hatası:",
+            error
+        );
+
+        statusBox.textContent =
+            "Konsept kaydı yüklenemedi.";
     }
 }
 
@@ -634,11 +739,13 @@ async function openPerson(personId) {
 --------------------------------------------------------- */
 
 let lastSearchQuery = "";
+let lastViewType = "search"; // search, work, person, concept
 
 const originalPerformSearch = performSearch;
 
 performSearch = async function(query) {
     lastSearchQuery = query.trim();
+    lastViewType = "search";
     return originalPerformSearch(query);
 };
 
@@ -654,6 +761,7 @@ resultsBox.addEventListener(
             openWorkDetail(
                 detailButton.dataset.workId
             );
+            lastViewType = "work";
             return;
         }
 
@@ -665,6 +773,22 @@ resultsBox.addEventListener(
             return;
         }
 
+        const backFromPerson =
+            event.target.closest("#back-from-person");
+
+        if (backFromPerson && lastSearchQuery) {
+            performSearch(lastSearchQuery);
+            return;
+        }
+
+        const backFromConcept =
+            event.target.closest("#back-from-concept");
+
+        if (backFromConcept && lastSearchQuery) {
+            performSearch(lastSearchQuery);
+            return;
+        }
+
         const personButton =
             event.target.closest(".person-link");
 
@@ -672,6 +796,18 @@ resultsBox.addEventListener(
             openPerson(
                 personButton.dataset.personId
             );
+            lastViewType = "person";
+            return;
+        }
+
+        const conceptButton =
+            event.target.closest(".concept-link");
+
+        if (conceptButton) {
+            openConcept(
+                conceptButton.dataset.conceptId
+            );
+            lastViewType = "concept";
             return;
         }
     }
