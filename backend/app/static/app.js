@@ -885,90 +885,238 @@ async function openCollectiveAgent(agentId) {
 --------------------------------------------------------- */
 
 let lastSearchQuery = "";
-let lastViewType = "search"; // search, work, person, concept
+
+const navigationStack = [];
+let currentView = null;
+let isNavigatingBack = false;
 
 const originalPerformSearch = performSearch;
 
+
+function rememberCurrentView() {
+    if (isNavigatingBack || !currentView) {
+        return;
+    }
+
+    navigationStack.push({
+        ...currentView
+    });
+}
+
+
+async function showSearch(query, addToHistory = true) {
+    const cleanQuery = query.trim();
+
+    if (!cleanQuery) {
+        return;
+    }
+
+    if (addToHistory) {
+        rememberCurrentView();
+    }
+
+    lastSearchQuery = cleanQuery;
+
+    await originalPerformSearch(cleanQuery);
+
+    currentView = {
+        type: "search",
+        query: cleanQuery
+    };
+}
+
+
+async function showWork(workId, addToHistory = true) {
+    if (addToHistory) {
+        rememberCurrentView();
+    }
+
+    await openWorkDetail(workId);
+
+    currentView = {
+        type: "work",
+        id: workId
+    };
+}
+
+
+async function showPerson(personId, addToHistory = true) {
+    if (addToHistory) {
+        rememberCurrentView();
+    }
+
+    await openPerson(personId);
+
+    currentView = {
+        type: "person",
+        id: personId
+    };
+}
+
+
+async function showConcept(conceptId, addToHistory = true) {
+    if (addToHistory) {
+        rememberCurrentView();
+    }
+
+    await openConcept(conceptId);
+
+    currentView = {
+        type: "concept",
+        id: conceptId
+    };
+}
+
+
+async function showCollectiveAgent(
+    agentId,
+    addToHistory = true
+) {
+    if (addToHistory) {
+        rememberCurrentView();
+    }
+
+    await openCollectiveAgent(agentId);
+
+    currentView = {
+        type: "collective-agent",
+        id: agentId
+    };
+}
+
+
+async function goBack() {
+    if (navigationStack.length === 0) {
+        if (lastSearchQuery) {
+            await showSearch(
+                lastSearchQuery,
+                false
+            );
+        }
+
+        return;
+    }
+
+    const previousView =
+        navigationStack.pop();
+
+    isNavigatingBack = true;
+
+    try {
+        if (previousView.type === "search") {
+            await showSearch(
+                previousView.query,
+                false
+            );
+        }
+
+        else if (previousView.type === "work") {
+            await showWork(
+                previousView.id,
+                false
+            );
+        }
+
+        else if (previousView.type === "person") {
+            await showPerson(
+                previousView.id,
+                false
+            );
+        }
+
+        else if (previousView.type === "concept") {
+            await showConcept(
+                previousView.id,
+                false
+            );
+        }
+
+        else if (
+            previousView.type === "collective-agent"
+        ) {
+            await showCollectiveAgent(
+                previousView.id,
+                false
+            );
+        }
+    }
+
+    finally {
+        isNavigatingBack = false;
+    }
+}
+
+
+/*
+    Mevcut arama formu ve örnek arama düğmeleri
+    performSearch() çağırdığı için onları da yeni
+    navigasyon sistemine bağlıyoruz.
+*/
 performSearch = async function(query) {
-    lastSearchQuery = query.trim();
-    lastViewType = "search";
-    return originalPerformSearch(query);
+    return showSearch(query);
 };
 
 
 resultsBox.addEventListener(
     "click",
-    event => {
+    async event => {
+
+        const backButton =
+            event.target.closest(
+                "#back-to-results, " +
+                "#back-from-person, " +
+                "#back-from-concept, " +
+                "#back-from-collective-agent"
+            );
+
+        if (backButton) {
+            await goBack();
+            return;
+        }
+
 
         const detailButton =
             event.target.closest(".detail-button");
 
         if (detailButton) {
-            openWorkDetail(
+            await showWork(
                 detailButton.dataset.workId
             );
-            lastViewType = "work";
             return;
         }
 
-        const backButton =
-            event.target.closest("#back-to-results");
 
-        if (backButton && lastSearchQuery) {
-            performSearch(lastSearchQuery);
-            return;
-        }
-		const backFromCollectiveAgent =
-			event.target.closest("#back-from-collective-agent");
+        const collectiveAgentButton =
+            event.target.closest(
+                ".collective-agent-link"
+            );
 
-		if (backFromCollectiveAgent && lastSearchQuery) {
-			performSearch(lastSearchQuery);
-			return;
-}
-        const backFromPerson =
-            event.target.closest("#back-from-person");
-
-        if (backFromPerson && lastSearchQuery) {
-            performSearch(lastSearchQuery);
+        if (collectiveAgentButton) {
+            await showCollectiveAgent(
+                collectiveAgentButton.dataset.agentId
+            );
             return;
         }
 
-        const backFromConcept =
-            event.target.closest("#back-from-concept");
 
-        if (backFromConcept && lastSearchQuery) {
-            performSearch(lastSearchQuery);
-            return;
-        }
-		const collectiveAgentButton =
-			event.target.closest(".collective-agent-link");
-
-		if (collectiveAgentButton) {
-			openCollectiveAgent(
-			collectiveAgentButton.dataset.agentId
-		);
-			lastViewType = "collective-agent";
-			return;
-}
         const personButton =
             event.target.closest(".person-link");
 
         if (personButton) {
-            openPerson(
+            await showPerson(
                 personButton.dataset.personId
             );
-            lastViewType = "person";
             return;
         }
+
 
         const conceptButton =
             event.target.closest(".concept-link");
 
         if (conceptButton) {
-            openConcept(
+            await showConcept(
                 conceptButton.dataset.conceptId
             );
-            lastViewType = "concept";
             return;
         }
     }
