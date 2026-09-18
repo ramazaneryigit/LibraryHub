@@ -425,3 +425,38 @@ footer {
 .empty-detail {
     color: var(--muted);
 }
+.entity-link {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: var(--primary-light);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.entity-link:hover {
+    text-decoration: underline;
+}
+
+.person-work-card {
+    margin-top: 15px;
+    padding: 18px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #f8fafc;
+}
+
+.person-work-card h3 {
+    margin: 5px 0;
+    color: var(--primary);
+    font-size: 20px;
+}
+
+.relation-label {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}

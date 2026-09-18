@@ -221,11 +221,6 @@ document
 
 
 /* ---------------------------------------------------------
-   KAYDI GÖRÜNTÜLE
-   Şimdilik ID'yi konsola yazıyoruz.
-   Sonraki aşamada gerçek detay ekranını açacağız.
---------------------------------------------------------- */
-/* ---------------------------------------------------------
    ESER DETAYI
 --------------------------------------------------------- */
 
@@ -401,6 +396,20 @@ function renderWorkDetail(work) {
     const authors = work.authors || [];
     const subjects = work.subjects || [];
 
+    const authorsHtml = authors.length ? `
+        <div class="detail-authors">
+            ${authors.map(author => `
+                <button
+                    type="button"
+                    class="entity-link person-link"
+                    data-person-id="${escapeHtml(author.entity_id)}"
+                >
+                    ${escapeHtml(author.name)}
+                </button>
+            `).join(", ")}
+        </div>
+    ` : "";
+
     return `
         <div class="detail-page">
 
@@ -428,13 +437,7 @@ function renderWorkDetail(work) {
                     </div>
                 ` : ""}
 
-                ${authors.length ? `
-                    <div class="detail-authors">
-                        ${authors
-                            .map(author => escapeHtml(author.name))
-                            .join(", ")}
-                    </div>
-                ` : ""}
+                ${authorsHtml}
 
                 <div class="metadata">
                     ${subjects.map(subject => `
@@ -508,6 +511,124 @@ async function openWorkDetail(workId) {
 }
 
 
+async function openPerson(personId) {
+    statusBox.textContent = "Kişi kaydı yükleniyor...";
+    resultsBox.innerHTML = "";
+
+    try {
+        const response = await fetch(
+            `/persons/${encodeURIComponent(personId)}/works`
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const person = await response.json();
+
+        statusBox.textContent = "";
+
+        const works = person.works || [];
+
+        resultsBox.innerHTML = `
+            <div class="detail-page">
+
+                <button
+                    type="button"
+                    class="back-button"
+                    id="back-from-person"
+                >
+                    ← Önceki görünüme dön
+                </button>
+
+                <div class="detail-hero">
+
+                    <div class="result-type">
+                        KİŞİ
+                    </div>
+
+                    <h2>
+                        ${escapeHtml(person.canonical_name)}
+                    </h2>
+
+                    ${person.biography ? `
+                        <p class="detail-description">
+                            ${escapeHtml(person.biography)}
+                        </p>
+                    ` : ""}
+
+                </div>
+
+                <section class="detail-content">
+
+                    <h2>İlişkili eserler</h2>
+
+                    ${
+                        works.length
+                            ? works.map(entry => `
+                                <article class="person-work-card">
+
+                                    <div class="relation-label">
+                                        ${escapeHtml(entry.role || "ilişkili")}
+                                    </div>
+
+                                    <h3>
+                                        ${escapeHtml(
+                                            entry.work.canonical_title
+                                        )}
+                                    </h3>
+
+                                    ${entry.work.original_title ? `
+                                        <div class="original-title">
+                                            ${escapeHtml(
+                                                entry.work.original_title
+                                            )}
+                                        </div>
+                                    ` : ""}
+
+                                    <button
+                                        type="button"
+                                        class="detail-button"
+                                        data-work-id="${
+                                            escapeHtml(
+                                                entry.work.entity_id
+                                            )
+                                        }"
+                                    >
+                                        Eseri görüntüle →
+                                    </button>
+
+                                </article>
+                            `).join("")
+                            : `
+                                <p class="empty-detail">
+                                    Bu kişiyle ilişkili eser bulunamadı.
+                                </p>
+                              `
+                    }
+
+                </section>
+
+            </div>
+        `;
+
+        window.scrollTo({
+            top: 0,
+            behavior: "smooth"
+        });
+
+    } catch (error) {
+        console.error(
+            "LibraryHub kişi hatası:",
+            error
+        );
+
+        statusBox.textContent =
+            "Kişi kaydı yüklenemedi.";
+    }
+}
+
+
 /* ---------------------------------------------------------
    SONUÇ / DETAY TIKLAMALARI
 --------------------------------------------------------- */
@@ -533,7 +654,6 @@ resultsBox.addEventListener(
             openWorkDetail(
                 detailButton.dataset.workId
             );
-
             return;
         }
 
@@ -542,6 +662,17 @@ resultsBox.addEventListener(
 
         if (backButton && lastSearchQuery) {
             performSearch(lastSearchQuery);
+            return;
+        }
+
+        const personButton =
+            event.target.closest(".person-link");
+
+        if (personButton) {
+            openPerson(
+                personButton.dataset.personId
+            );
+            return;
         }
     }
 );

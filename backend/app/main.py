@@ -475,6 +475,59 @@ def get_person(
             for nomen in nomens
         ],
     }
+@app.get("/persons/{entity_id}/works")
+def get_person_works(
+    entity_id: UUID,
+    db: Session = Depends(get_db),
+):
+    person = db.get(Person, entity_id)
+
+    if person is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Person not found",
+        )
+
+    rows = db.execute(
+        text(
+            """
+            SELECT DISTINCT
+                w.entity_id,
+                war.role
+            FROM work_agent_relation war
+            JOIN works w
+              ON w.entity_id = war.work_entity_id
+            WHERE war.agent_entity_id = :entity_id
+            ORDER BY w.entity_id
+            """
+        ),
+        {
+            "entity_id": entity_id,
+        },
+    ).mappings().all()
+
+    works = []
+
+    for row in rows:
+        detail = build_work_detail(
+            work_entity_id=row["entity_id"],
+            db=db,
+        )
+
+        if detail is not None:
+            works.append(
+                {
+                    "role": row["role"],
+                    "work": detail,
+                }
+            )
+
+    return {
+        "entity_id": str(person.entity_id),
+        "canonical_name": person.canonical_name,
+        "biography": person.biography,
+        "works": works,
+    }
 
 
 @app.post("/persons/{entity_id}/nomens", status_code=201)
