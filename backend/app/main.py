@@ -1031,3 +1031,88 @@ def get_work_detail(
         )
     
     return result
+    
+@app.get("/search")
+def search(
+    q: str = Query(min_length=1, max_length=500),
+    db: Session = Depends(get_db),
+):
+    search_term = f"%{q.strip()}%"
+
+    query = """
+    SELECT DISTINCT
+        w.entity_id,
+        w.canonical_title
+    FROM works w
+
+    -- Work yazarları / yaratıcıları
+    LEFT JOIN work_agent_relation war
+      ON war.work_entity_id = w.entity_id
+    LEFT JOIN persons work_person
+      ON work_person.entity_id = war.agent_entity_id
+
+    -- Work konuları
+    LEFT JOIN entity_relation subject_rel
+      ON subject_rel.subject_entity_id = w.entity_id
+     AND subject_rel.predicate = 'has_subject'
+    LEFT JOIN concepts concept
+      ON concept.entity_id = subject_rel.object_entity_id
+
+    -- Work -> Expression
+    LEFT JOIN work_expression we
+      ON we.work_entity_id = w.entity_id
+    LEFT JOIN expressions expression
+      ON expression.entity_id = we.expression_entity_id
+
+    -- Expression kişileri (örn. çevirmen)
+    LEFT JOIN expression_agent_relation ear
+      ON ear.expression_entity_id = expression.entity_id
+    LEFT JOIN persons expression_person
+      ON expression_person.entity_id = ear.agent_entity_id
+
+    -- Expression -> Manifestation
+    LEFT JOIN expression_manifestation em
+      ON em.expression_entity_id = expression.entity_id
+    LEFT JOIN manifestations manifestation
+      ON manifestation.entity_id = em.manifestation_entity_id
+
+    -- Manifestation -> Item
+    LEFT JOIN manifestation_item mi
+      ON mi.manifestation_entity_id = manifestation.entity_id
+    LEFT JOIN items item
+      ON item.entity_id = mi.item_entity_id
+
+    WHERE
+        w.canonical_title ILIKE :search_term
+        OR w.original_title ILIKE :search_term
+        OR work_person.canonical_name ILIKE :search_term
+        OR concept.preferred_label ILIKE :search_term
+        OR expression_person.canonical_name ILIKE :search_term
+        OR item.barcode ILIKE :search_term
+        OR item.shelfmark ILIKE :search_term
+
+    ORDER BY w.canonical_title
+    LIMIT 50
+    """
+
+    rows = db.execute(
+        text(query),
+        {"search_term": search_term},
+    ).mappings().all()
+
+    results = []
+
+    for row in rows:
+        work_detail = build_work_detail(
+            work_entity_id=row["entity_id"],
+            db=db,
+        )
+
+        if work_detail is not None:
+            results.append(work_detail)
+
+    return {
+        "query": q,
+        "count": len(results),
+        "results": results,
+    }
