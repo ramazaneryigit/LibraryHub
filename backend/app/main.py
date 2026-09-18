@@ -492,13 +492,37 @@ def get_person_works(
         text(
             """
             SELECT DISTINCT
-                w.entity_id,
-                war.role
-            FROM work_agent_relation war
-            JOIN works w
-              ON w.entity_id = war.work_entity_id
-            WHERE war.agent_entity_id = :entity_id
-            ORDER BY w.entity_id
+                related.entity_id,
+                related.role,
+                related.relation_level
+            FROM (
+                -- Kişinin doğrudan Work ile ilişkisi
+                SELECT
+                    w.entity_id AS entity_id,
+                    war.role AS role,
+                    'work' AS relation_level
+                FROM work_agent_relation war
+                JOIN works w
+                  ON w.entity_id = war.work_entity_id
+                WHERE war.agent_entity_id = :entity_id
+
+                UNION
+
+                -- Kişinin Expression üzerinden Work ile ilişkisi
+                SELECT
+                    w.entity_id AS entity_id,
+                    ear.role AS role,
+                    'expression' AS relation_level
+                FROM expression_agent_relation ear
+                JOIN work_expression we
+                  ON we.expression_entity_id = ear.expression_entity_id
+                JOIN works w
+                  ON w.entity_id = we.work_entity_id
+                WHERE ear.agent_entity_id = :entity_id
+            ) AS related
+            ORDER BY
+                related.entity_id,
+                related.role
             """
         ),
         {
@@ -518,6 +542,7 @@ def get_person_works(
             works.append(
                 {
                     "role": row["role"],
+                    "relation_level": row["relation_level"],
                     "work": detail,
                 }
             )

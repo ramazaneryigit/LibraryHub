@@ -372,18 +372,26 @@ function renderDetailExpressions(expressions) {
                     </p>
                 ` : ""}
 
+                
                 ${agents.length ? `
-                    <p>
-                        <strong>Katkı sağlayan:</strong>
-                        ${agents.map(agent =>
-                            `${escapeHtml(agent.name)}${
-                                agent.role
-                                    ? ` (${escapeHtml(agent.role)})`
-                                    : ""
-                            }`
-                        ).join(", ")}
-                    </p>
-                ` : ""}
+					<p>
+						<strong>Katkı sağlayan:</strong>
+
+						${agents.map(agent => `
+							<button
+							type="button"
+							class="entity-link person-link"
+							data-person-id="${escapeHtml(agent.entity_id)}"
+							>
+							${escapeHtml(agent.name)}
+							</button>
+								${agent.role
+									? ` (${escapeHtml(agent.role)})`
+									: ""
+							}
+        `				).join(", ")}
+					</p>
+` : ""}
 
                 ${renderDetailManifestations(expression.manifestations)}
             </div>
