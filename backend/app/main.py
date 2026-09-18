@@ -657,151 +657,16 @@ def search_by_concept(
         w.entity_id,
         w.canonical_title,
         ct.preferred_label AS matched_concept,
-        ct.level,
-        COALESCE(
-            json_agg(
-                json_build_object(
-                    'entity_id', p.entity_id,
-                    'name', p.canonical_name,
-                    'role', war.role
-                )
-            ) FILTER (WHERE p.entity_id IS NOT NULL),
-            '[]'::json
-        ) AS authors,
-        COALESCE(
-            (
-                SELECT json_agg(
-                    json_build_object(
-                        'entity_id', e.entity_id,
-                        'language', e.language,
-                        'expression_form', e.expression_form,
-                        'description', e.description,
-                        'agents',
-                        COALESCE(
-                            (
-                                SELECT json_agg(
-                                    json_build_object(
-                                        'entity_id', p2.entity_id,
-                                        'name', p2.canonical_name,
-                                        'role', ear.role
-                                    )
-                                    ORDER BY p2.canonical_name
-                                )
-                                FROM expression_agent_relation ear
-                                JOIN persons p2
-                                  ON p2.entity_id = ear.agent_entity_id
-                                WHERE ear.expression_entity_id = e.entity_id
-                            ),
-                            '[]'::json
-                        ),
-                        'manifestations',
-                        COALESCE(
-                            (
-                                SELECT json_agg(
-                                    json_build_object(
-                                        'entity_id', m.entity_id,
-                                        'publication_statement', m.publication_statement,
-                                        'publication_date', m.publication_date,
-                                        'edition_statement', m.edition_statement,
-                                        'carrier_type', m.carrier_type,
-                                        'extent', m.extent,
-                                        'notes', m.notes,
-                                        'publishers',
-                                        COALESCE(
-                                            (
-                                                SELECT json_agg(
-                                                    json_build_object(
-                                                        'entity_id', ca.entity_id,
-                                                        'name', ca.canonical_name,
-                                                        'role', ma.role
-                                                    )
-                                                    ORDER BY ca.canonical_name
-                                                )
-                                                FROM manifestation_agent_relation ma
-                                                JOIN collective_agents ca
-                                                  ON ca.entity_id = ma.agent_entity_id
-                                                WHERE ma.manifestation_entity_id = m.entity_id
-                                                  AND ma.role = 'publisher'
-                                            ),
-                                            '[]'::json
-                                        ),
-                                        'items',
-                                        COALESCE(
-                                            (
-                                                SELECT json_agg(
-                                                    json_build_object(
-                                                        'entity_id', i.entity_id,
-                                                        'barcode', i.barcode,
-                                                        'shelfmark', i.shelfmark,
-                                                        'condition', i.condition,
-                                                        'availability_status', i.availability_status,
-                                                        'notes', i.notes,
-                                                        'holding_institutions',
-                                                        COALESCE(
-                                                            (
-                                                                SELECT json_agg(
-                                                                    json_build_object(
-                                                                        'entity_id', ca2.entity_id,
-                                                                        'name', ca2.canonical_name,
-                                                                        'role', iar.role
-                                                                    )
-                                                                    ORDER BY ca2.canonical_name
-                                                                )
-                                                                FROM item_agent_relation iar
-                                                                JOIN collective_agents ca2
-                                                                  ON ca2.entity_id = iar.agent_entity_id
-                                                                WHERE iar.item_entity_id = i.entity_id
-                                                                  AND iar.role = 'holding_institution'
-                                                            ),
-                                                            '[]'::json
-                                                        )
-                                                    )
-                                                    ORDER BY i.shelfmark, i.barcode
-                                                )
-                                                FROM manifestation_item mi
-                                                JOIN items i
-                                                  ON i.entity_id = mi.item_entity_id
-                                                WHERE mi.manifestation_entity_id = m.entity_id
-                                            ),
-                                            '[]'::json
-                                        )
-                                    )
-                                    ORDER BY m.publication_date, m.edition_statement
-                                )
-                                FROM expression_manifestation em
-                                JOIN manifestations m
-                                  ON m.entity_id = em.manifestation_entity_id
-                                WHERE em.expression_entity_id = e.entity_id
-                            ),
-                            '[]'::json
-                        )
-                    )
-                    ORDER BY e.language
-                )
-                FROM work_expression we
-                JOIN expressions e
-                  ON e.entity_id = we.expression_entity_id
-                WHERE we.work_entity_id = w.entity_id
-            ),
-            '[]'::json
-        ) AS expressions
+        ct.level
     FROM concept_tree ct
     JOIN entity_relation er
       ON er.object_entity_id = ct.entity_id
      AND er.predicate = 'has_subject'
     JOIN works w
       ON w.entity_id = er.subject_entity_id
-    LEFT JOIN work_agent_relation war
-      ON war.work_entity_id = w.entity_id
-     AND war.role IN ('author', 'creator')
-    LEFT JOIN persons p
-      ON p.entity_id = war.agent_entity_id
-    GROUP BY
-        w.entity_id,
-        w.canonical_title,
-        ct.preferred_label,
-        ct.level
-    ORDER BY ct.level, w.canonical_title
+    ORDER BY
+        ct.level,
+        w.canonical_title
     """
 
     rows = db.execute(
@@ -809,22 +674,30 @@ def search_by_concept(
         {"concept_id": str(concept_entity_id)},
     ).mappings().all()
 
+    
+    results = []
+
+    for row in rows:
+        work_detail = build_work_detail(
+            work_entity_id=row["entity_id"],
+            db=db,
+        )
+
+        results.append({
+            "work_entity_id": str(row["entity_id"]),
+            "canonical_title": row["canonical_title"],
+            "matched_concept": row["matched_concept"],
+            "level": row["level"],
+            "authors": work_detail["authors"],
+            "expressions": work_detail["expressions"],
+        })
+
     return {
         "concept": {
             "entity_id": str(concept.entity_id),
             "preferred_label": concept.preferred_label,
         },
-        "results": [
-            {
-                "work_entity_id": str(row["entity_id"]),
-                "canonical_title": row["canonical_title"],
-                "matched_concept": row["matched_concept"],
-                "level": row["level"],
-                "authors": row["authors"] if row["authors"] else [],
-                "expressions": row["expressions"] if row["expressions"] else [],
-            }
-            for row in rows
-        ],
+        "results": results,
     }
 
 
