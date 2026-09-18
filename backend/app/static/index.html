@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LibraryHub</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+
+<header class="topbar">
+    <div class="brand">
+        <div class="logo">LH</div>
+
+        <div>
+            <h1>LibraryHub</h1>
+            <p>Bağlantılı kütüphane keşif platformu</p>
+        </div>
+    </div>
+</header>
+
+<main>
+
+    <section class="hero">
+        <h2>Bilgiyi keşfet</h2>
+
+        <p>
+            Eser, yazar, konu, çevirmen veya kütüphane kaydı üzerinden ara.
+        </p>
+
+        <form id="search-form" class="search-box">
+            <input
+                id="search-input"
+                type="search"
+                placeholder="Örn. Dostoyevski, Rus edebiyatı, Mazlum Beyhan..."
+                autocomplete="off"
+                required
+            >
+
+            <button type="submit">Ara</button>
+        </form>
+
+        <div class="examples">
+            Örnek:
+            <button type="button" data-query="Suç ve Ceza">Suç ve Ceza</button>
+            <button type="button" data-query="Dostoyevski">Dostoyevski</button>
+            <button type="button" data-query="Rus edebiyatı">Rus edebiyatı</button>
+            <button type="button" data-query="Mazlum Beyhan">Mazlum Beyhan</button>
+            <button type="button" data-query="KKU-123456">KKU-123456</button>
+        </div>
+    </section>
+
+    <section class="content">
+        <div id="status" class="status">
+            Aramaya başlamak için yukarıdaki kutuyu kullanın.
+        </div>
+
+        <div id="results" class="results"></div>
+    </section>
+
+</main>
+
+<footer>
+    LibraryHub · Bağlantılı bibliyografik bilgi altyapısı
+</footer>
+
+<script src="/static/app.js"></script>
+
+</body>
+</html>

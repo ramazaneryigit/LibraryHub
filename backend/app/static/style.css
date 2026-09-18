@@ -1,0 +1,250 @@
+* {
+    box-sizing: border-box;
+}
+
+:root {
+    --primary: #173f5f;
+    --primary-light: #20639b;
+    --background: #f5f7fa;
+    --surface: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e1e7ef;
+}
+
+body {
+    margin: 0;
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: var(--background);
+    color: var(--text);
+}
+
+.topbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+}
+
+.brand {
+    max-width: 1200px;
+    margin: auto;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.logo {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: var(--primary);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 18px;
+}
+
+.brand h1 {
+    margin: 0;
+    font-size: 23px;
+}
+
+.brand p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.hero {
+    background: linear-gradient(135deg, #173f5f, #20639b);
+    color: white;
+    padding: 65px 24px;
+    text-align: center;
+}
+
+.hero h2 {
+    margin: 0;
+    font-size: 38px;
+    font-weight: 650;
+}
+
+.hero > p {
+    margin: 12px 0 28px;
+    opacity: 0.9;
+}
+
+.search-box {
+    max-width: 760px;
+    margin: auto;
+    display: flex;
+    background: white;
+    padding: 6px;
+    border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+}
+
+.search-box input {
+    flex: 1;
+    border: 0;
+    outline: none;
+    padding: 16px;
+    font-size: 16px;
+    border-radius: 8px;
+    min-width: 0;
+}
+
+.search-box button {
+    border: 0;
+    background: var(--primary);
+    color: white;
+    padding: 0 28px;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.search-box button:hover {
+    background: var(--primary-light);
+}
+
+.examples {
+    margin-top: 20px;
+    font-size: 13px;
+    opacity: 0.95;
+}
+
+.examples button {
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    background: rgba(255, 255, 255, 0.10);
+    color: white;
+    padding: 6px 10px;
+    margin: 4px 2px;
+    border-radius: 20px;
+    cursor: pointer;
+}
+
+.examples button:hover {
+    background: white;
+    color: var(--primary);
+}
+
+.content {
+    max-width: 1100px;
+    margin: 35px auto;
+    padding: 0 20px;
+    min-height: 300px;
+}
+
+.status {
+    color: var(--muted);
+    margin-bottom: 18px;
+}
+
+.results {
+    display: grid;
+    gap: 18px;
+}
+
+.result-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.result-card h3 {
+    margin: 0 0 6px;
+    color: var(--primary);
+    font-size: 22px;
+}
+
+.original-title {
+    color: var(--muted);
+    font-size: 14px;
+    margin-bottom: 15px;
+}
+
+.metadata {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 12px 0;
+}
+
+.tag {
+    background: #edf4f8;
+    color: var(--primary);
+    padding: 5px 9px;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.detail-section {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.detail-section h4 {
+    margin: 0 0 10px;
+    font-size: 15px;
+}
+
+.expression {
+    background: #f8fafc;
+    border-left: 3px solid var(--primary-light);
+    padding: 14px;
+    margin-top: 10px;
+    border-radius: 4px 8px 8px 4px;
+}
+
+.manifestation {
+    margin: 12px 0 0 16px;
+    padding: 12px;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.item {
+    margin-top: 10px;
+    padding: 10px;
+    background: #f5f7fa;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+footer {
+    text-align: center;
+    padding: 25px;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    background: white;
+    font-size: 13px;
+}
+
+@media (max-width: 650px) {
+    .hero {
+        padding: 45px 15px;
+    }
+
+    .hero h2 {
+        font-size: 30px;
+    }
+
+    .search-box {
+        flex-direction: column;
+    }
+
+    .search-box button {
+        padding: 13px;
+    }
+
+    .topbar {
+        padding: 14px 18px;
+    }
+}

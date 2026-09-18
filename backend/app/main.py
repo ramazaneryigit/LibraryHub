@@ -1,6 +1,8 @@
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +23,11 @@ from .models import (
 app = FastAPI(
     title="LibraryHub API",
     version="0.1.0",
+)
+app.mount(
+    "/static",
+    StaticFiles(directory="app/static"),
+    name="static",
 )
 
 
@@ -80,13 +87,9 @@ RELATION_DEFINITIONS = {
     },
 }
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 def root():
-    return {
-        "system": "LibraryHub",
-        "status": "running",
-        "message": "Yaşayan eser platformu çekirdeği çalışıyor.",
-    }
+    return FileResponse("app/static/index.html")
 
 
 @app.get("/health")
