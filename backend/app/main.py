@@ -163,62 +163,6 @@ def list_entity_relations(
         "relations": relations,
     }
 
-@app.get("/relations/{entity_id}")
-def list_entity_relations(
-    entity_id: UUID,
-    db: Session = Depends(get_db),
-):
-    entity = db.get(Entity, entity_id)
-
-    if entity is None:
-        raise HTTPException(status_code=404, detail="Entity not found")
-
-    rows = db.execute(
-        text("""
-            SELECT
-                er.subject_entity_id,
-                er.predicate,
-                er.object_entity_id
-            FROM entity_relation er
-            WHERE er.subject_entity_id = :entity_id
-               OR er.object_entity_id = :entity_id
-            ORDER BY er.predicate
-        """),
-        {"entity_id": entity_id},
-    ).fetchall()
-
-    relations = []
-
-    for row in rows:
-        subject_id = row.subject_entity_id
-        predicate = row.predicate
-        object_id = row.object_entity_id
-
-        definition = RELATION_DEFINITIONS.get(predicate)
-
-        if subject_id == entity_id:
-            relation = {
-                "direction": "outgoing",
-                "predicate": predicate,
-                "related_entity_id": str(object_id),
-            }
-        else:
-            relation = {
-                "direction": "incoming",
-                "predicate": predicate,
-                "related_entity_id": str(subject_id),
-            }
-
-        if definition:
-            relation["inverse"] = definition["inverse"]
-            relation["symmetric"] = definition["symmetric"]
-
-        relations.append(relation)
-
-    return {
-        "entity_id": str(entity_id),
-        "relations": relations,
-    }
     
 @app.post("/relations/{entity_id}", status_code=201)
 def create_entity_relation(
@@ -883,157 +827,15 @@ def search_by_concept(
         ],
     }
 
-    rows = db.execute(
-        text(query),
-        {"concept_id": str(concept_entity_id)},
-    ).mappings().all()
 
-    return {
-        "concept": {
-            "entity_id": str(concept.entity_id),
-            "preferred_label": concept.preferred_label,
-        },
-        "results": [
-            {
-                "work_entity_id": str(row["entity_id"]),
-                "canonical_title": row["canonical_title"],
-                "matched_concept": row["matched_concept"],
-                "level": row["level"],
-                "authors": row["authors"] if row["authors"] else [],
-                "expressions": row["expressions"] if row["expressions"] else [],
-            }
-            for row in rows
-        ],
-    }
-
-    rows = db.execute(
-        text(query),
-        {"concept_id": str(concept_entity_id)},
-    ).mappings().all()
-
-    return {
-        "concept": {
-            "entity_id": str(concept.entity_id),
-            "preferred_label": concept.preferred_label,
-        },
-        "results": [
-            {
-                "work_entity_id": str(row["entity_id"]),
-                "canonical_title": row["canonical_title"],
-                "matched_concept": row["matched_concept"],
-                "level": row["level"],
-                "authors": row["authors"] if row["authors"] else [],
-                "expressions": row["expressions"] if row["expressions"] else [],
-            }
-            for row in rows
-        ],
-    }
-
-    rows = db.execute(
-        text(query),
-        {"concept_id": str(concept_entity_id)},
-    ).mappings().all()
-
-    return {
-        "concept": {
-            "entity_id": str(concept.entity_id),
-            "preferred_label": concept.preferred_label,
-        },
-        "results": [
-            {
-                "work_entity_id": str(row["entity_id"]),
-                "canonical_title": row["canonical_title"],
-                "matched_concept": row["matched_concept"],
-                "level": row["level"],
-                "authors": row["authors"] if row["authors"] else [],
-                "expressions": row["expressions"] if row["expressions"] else [],
-            }
-            for row in rows
-        ],
-    }
-
-    rows = db.execute(
-        text(query),
-        {"concept_id": str(concept_entity_id)},
-    ).mappings().all()
-
-    return {
-        "concept": {
-            "entity_id": str(concept.entity_id),
-            "preferred_label": concept.preferred_label,
-        },
-        "results": [
-            {
-                "work_entity_id": str(row["entity_id"]),
-                "canonical_title": row["canonical_title"],
-                "matched_concept": row["matched_concept"],
-                "level": row["level"],
-                "authors": row["authors"] if row["authors"] else [],
-                "expressions": row["expressions"] if row["expressions"] else [],
-            }
-            for row in rows
-        ],
-    }
-
-    rows = db.execute(
-        text(query),
-        {"concept_id": str(concept_entity_id)},
-    ).mappings().all()
-
-    return {
-        "concept": {
-            "entity_id": str(concept.entity_id),
-            "preferred_label": concept.preferred_label,
-        },
-        "results": [
-            {
-                "work_entity_id": str(row["entity_id"]),
-                "canonical_title": row["canonical_title"],
-                "matched_concept": row["matched_concept"],
-                "level": row["level"],
-                "authors": row["authors"] if row["authors"] else [],
-                "expressions": row["expressions"] if row["expressions"] else [],
-            }
-            for row in rows
-        ],
-    }
-
-    rows = db.execute(
-        text(query),
-        {"concept_id": str(concept_entity_id)},
-    ).mappings().all()
-
-    return {
-        "concept": {
-            "entity_id": str(concept.entity_id),
-            "preferred_label": concept.preferred_label,
-        },
-        "results": [
-            {
-                "work_entity_id": str(row["entity_id"]),
-                "canonical_title": row["canonical_title"],
-                "matched_concept": row["matched_concept"],
-                "level": row["level"],
-                "authors": row["authors"] if row["authors"] else [],
-                "expressions": row["expressions"] if row["expressions"] else [],
-            }
-            for row in rows
-        ],
-    }
-
-
-@app.get("/works/{work_entity_id}/detail")
-def get_work_detail(
+def build_work_detail(
     work_entity_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session,
 ):
     work = db.get(Work, work_entity_id)
 
     if work is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Work not found",
-        )
+        return None
 
     # Authors
     author_query = """
@@ -1216,7 +1018,7 @@ def get_work_detail(
             {"item_ids": item_ids},
         ).mappings().all()
 
-        # Build hierarchical WEMI response
+    # Build hierarchical WEMI response
 
     expression_agents_by_expression = {}
     for row in expression_agents:
@@ -1340,3 +1142,19 @@ def get_work_detail(
 
         "expressions": expression_tree,
     }
+
+
+@app.get("/works/{work_entity_id}/detail")
+def get_work_detail(
+    work_entity_id: UUID,
+    db: Session = Depends(get_db),
+):
+    result = build_work_detail(work_entity_id, db)
+    
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Work not found",
+        )
+    
+    return result
