@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -27,7 +28,7 @@ class Entity(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "entity_type IN ('PERSON', 'ORGANIZATION', 'CONCEPT', 'WORK', 'EXPRESSION', 'MANIFESTATION', 'ITEM', 'PLACE', 'TIME_SPAN')",
+            "entity_type IN ('PERSON', 'ORGANIZATION', 'CONCEPT', 'WORK', 'EXPRESSION', 'MANIFESTATION', 'ITEM', 'PLACE', 'TIME_SPAN', 'CLASSIFICATION')",
             name="ck_entities_entity_type",
         ),
     )
@@ -54,7 +55,60 @@ class Entity(Base):
         onupdate=utcnow,
         nullable=False,
     )
+class Identifier(Base):
+    __tablename__ = "identifiers"
 
+    __table_args__ = (
+        UniqueConstraint(
+            "entity_id",
+            "scheme",
+            "value",
+            name="uq_identifier_entity_scheme_value",
+        ),
+        Index(
+            "ix_identifiers_scheme_value",
+            "scheme",
+            "value",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    scheme: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    value: Mapped[str] = mapped_column(
+        String(1000),
+        nullable=False,
+    )
+
+    qualifier: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    preferred: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
 
 class Work(Base):
     __tablename__ = "works"
@@ -75,6 +129,11 @@ class Work(Base):
     )
 
     original_language: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    work_type: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
     )
@@ -244,6 +303,15 @@ class CollectiveAgent(Base):
 class Nomen(Base):
     __tablename__ = "nomens"
 
+    __table_args__ = (
+        Index(
+            "uq_nomens_entity_preferred_true",
+            "entity_id",
+            unique=True,
+            postgresql_where=text("preferred = true"),
+        ),
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
         default=uuid.uuid4,
@@ -278,15 +346,6 @@ class Nomen(Base):
         Boolean,
         default=False,
         nullable=False,
-    )
-    
-    __table_args__ = (
-        Index(
-            "uq_nomens_entity_preferred_true",
-            "entity_id",
-            unique=True,
-            postgresql_where=text("preferred = true"),
-        ),
     )
 
 
@@ -523,4 +582,419 @@ class EntityRelation(Base):
         DateTime(timezone=True),
         default=utcnow,
         nullable=False,
+    )
+
+class RelationPredicate(Base):
+    __tablename__ = "relation_predicates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    code: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    label: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    source_scheme: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
+
+    uri: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
+    inverse_predicate_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("relation_predicates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    symmetric: Mapped[bool] = mapped_column(
+        default=False,
+        nullable=False,
+    )
+
+    transitive: Mapped[bool] = mapped_column(
+        default=False,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+class RelationPredicateConstraint(Base):
+    __tablename__ = "relation_predicate_constraints"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "predicate_id",
+            "subject_entity_type",
+            "object_entity_type",
+            name="uq_relation_predicate_constraint",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    predicate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "relation_predicates.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    subject_entity_type: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    object_entity_type: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+class VocabularyScheme(Base):
+    __tablename__ = "vocabulary_schemes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    code: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+
+    scheme_type: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    version: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    uri: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+class VocabularySchemeEdition(Base):
+    __tablename__ = "vocabulary_scheme_editions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    scheme_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "vocabulary_schemes.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    edition: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    release_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    valid_from: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    valid_to: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    uri: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
+    status: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "scheme_id",
+            "edition",
+            name="uq_vocabulary_scheme_edition",
+        ),
+    )
+
+class ClassificationNode(Base):
+    __tablename__ = "classification_nodes"
+
+    entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    scheme_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vocabulary_schemes.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+
+    scheme_edition_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "vocabulary_scheme_editions.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    notation: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+    )
+
+    notation_end: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
+
+    caption: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
+    parent_entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("classification_nodes.entity_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    uri: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
+    status: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "scheme_id",
+            "notation",
+            name="uq_classification_scheme_notation",
+        ),
+    )
+
+
+class WorkClassification(Base):
+    __tablename__ = "work_classifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    work_entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("works.entity_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    classification_entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("classification_nodes.entity_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
+    assigned_by: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
+
+    source: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "work_entity_id",
+            "classification_entity_id",
+            name="uq_work_classification",
+        ),
+    )
+class ClassificationMapping(Base):
+    __tablename__ = "classification_mappings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    source_classification_entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "classification_nodes.entity_id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    target_classification_entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "classification_nodes.entity_id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    mapping_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    confidence: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    mapping_method: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    source: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    source_uri: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
+    source_scheme_version: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    target_scheme_version: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    review_status: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_classification_entity_id",
+            "target_classification_entity_id",
+            "mapping_type",
+            name="uq_classification_mapping",
+        ),
+        CheckConstraint(
+            "mapping_type IN "
+            "('exact_match', 'close_match', 'broad_match', "
+            "'narrow_match', 'related_match')",
+            name="ck_classification_mapping_type",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR "
+            "(confidence >= 0.0 AND confidence <= 1.0)",
+            name="ck_classification_mapping_confidence",
+        ),
+        CheckConstraint(
+            "source_classification_entity_id "
+            "<> target_classification_entity_id",
+            name="ck_classification_mapping_not_self",
+        ),
     )
