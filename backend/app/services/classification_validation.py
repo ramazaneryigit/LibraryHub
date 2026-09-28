@@ -3,13 +3,13 @@ import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-
 from ..models import (
     ClassificationNode,
     SourceClassification,
     VocabularyScheme,
     WorkClassification,
 )
+
 
 def is_valid_ddc_notation(notation: str) -> bool:
     """
@@ -33,7 +33,8 @@ def is_valid_ddc_notation(notation: str) -> bool:
             value,
         )
     )
-    
+
+
 def is_valid_lcc_notation(notation: str) -> bool:
     """
     Validate the basic syntactic form of an LCC notation.
@@ -57,7 +58,8 @@ def is_valid_lcc_notation(notation: str) -> bool:
             value,
         )
     )
-    
+
+
 def evaluate_source_classification(
     db: Session,
     source_classification: SourceClassification,
@@ -75,7 +77,25 @@ def evaluate_source_classification(
         source_classification.scheme_id,
     )
 
-        
+    # DDC syntax validation
+    if (
+        scheme is not None
+        and scheme.code.upper() == "DDC"
+        and not is_valid_ddc_notation(source_classification.notation)
+    ):
+        return {
+            "status": "warning",
+            "warning_code": "INVALID_NOTATION",
+            "message": (
+                "Kaynak sınıflama değeri temel DDC "
+                "notasyon biçimine uymuyor."
+            ),
+            "confidence": 1.0,
+            "validation_method": "ddc_syntax_validation",
+            "suggested_classification_entity_id": None,
+        }
+
+    # LCC syntax validation
     if (
         scheme is not None
         and scheme.code.upper() == "LCC"
@@ -93,6 +113,8 @@ def evaluate_source_classification(
             "suggested_classification_entity_id": None,
         }
 
+    # LibraryHub normalized classifications for the same Work
+    # and vocabulary scheme.
     normalized_rows = db.execute(
         select(
             WorkClassification,
@@ -111,6 +133,7 @@ def evaluate_source_classification(
         )
     ).all()
 
+    # No normalized classification exists yet.
     if not normalized_rows:
         return {
             "status": "unresolved",
@@ -126,6 +149,7 @@ def evaluate_source_classification(
 
     source_notation = source_classification.notation.strip()
 
+    # Exact match with a normalized classification.
     for work_classification, node in normalized_rows:
         if source_notation == node.notation.strip():
             return {
@@ -140,6 +164,7 @@ def evaluate_source_classification(
                 "suggested_classification_entity_id": None,
             }
 
+    # Prefer the primary normalized classification as suggestion.
     primary_candidates = [
         node
         for work_classification, node in normalized_rows
@@ -163,7 +188,8 @@ def evaluate_source_classification(
         "validation_method": "normalized_comparison",
         "suggested_classification_entity_id": suggested_node.entity_id,
     }
-    
+
+
 def create_automatic_validation(
     db: Session,
     source_classification: SourceClassification,
@@ -188,6 +214,7 @@ def create_automatic_validation(
     validation = ClassificationValidation(
         source_classification_id=source_classification.id,
         status=result["status"],
+        origin="automatic",
         warning_code=result["warning_code"],
         message=result["message"],
         suggested_classification_entity_id=(
@@ -198,6 +225,52 @@ def create_automatic_validation(
     )
 
     db.add(validation)
+    db.commit()
+    db.refresh(validation)
+
+    return validation
+
+
+def revalidate_classification(
+    db: Session,
+    source_classification: SourceClassification,
+):
+    from ..models import ClassificationValidation
+
+    validation = db.scalar(
+        select(ClassificationValidation).where(
+            ClassificationValidation.source_classification_id
+            == source_classification.id
+        )
+    )
+
+    # No validation exists yet:
+    # create a new automatic validation.
+    if validation is None:
+        return create_automatic_validation(
+            db,
+            source_classification,
+        )
+
+    # Manual decisions must never be overwritten automatically.
+    if validation.origin != "automatic":
+        return validation
+
+    # Re-evaluate automatic validation using current rules.
+    result = evaluate_source_classification(
+        db,
+        source_classification,
+    )
+
+    validation.status = result["status"]
+    validation.warning_code = result["warning_code"]
+    validation.message = result["message"]
+    validation.suggested_classification_entity_id = (
+        result["suggested_classification_entity_id"]
+    )
+    validation.confidence = result["confidence"]
+    validation.validation_method = result["validation_method"]
+
     db.commit()
     db.refresh(validation)
 

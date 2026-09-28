@@ -1083,6 +1083,10 @@ class ClassificationValidation(Base):
             name="ck_classification_validation_status",
         ),
         CheckConstraint(
+            "origin IN ('manual', 'automatic')",
+            name="ck_classification_validation_origin",
+        ),
+        CheckConstraint(
             "confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)",
             name="ck_classification_validation_confidence",
         ),
@@ -1106,6 +1110,10 @@ class ClassificationValidation(Base):
         String(50),
         nullable=False,
         default="unresolved",
+    )
+    
+    origin: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="automatic"
     )
 
     warning_code: Mapped[str | None] = mapped_column(

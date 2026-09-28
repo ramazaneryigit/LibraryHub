@@ -6,7 +6,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from ..services.classification_validation import create_automatic_validation
+from ..services.classification_validation import (
+    create_automatic_validation,
+    revalidate_classification,
+)
 
 from ..db import get_db
 from ..models import (
@@ -1180,7 +1183,10 @@ def create_classification_validation(
                 detail="Suggested classification not found",
             )
 
-        if suggested_classification.scheme_id != source_classification.scheme_id:
+        if (
+            suggested_classification.scheme_id
+            != source_classification.scheme_id
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -1205,6 +1211,7 @@ def create_classification_validation(
     validation = ClassificationValidation(
         source_classification_id=payload.source_classification_id,
         status=payload.status,
+        origin="manual",
         warning_code=payload.warning_code,
         message=payload.message,
         suggested_classification_entity_id=(
@@ -1231,6 +1238,7 @@ def create_classification_validation(
         "id": validation.id,
         "source_classification_id": validation.source_classification_id,
         "status": validation.status,
+        "origin": validation.origin,
         "warning_code": validation.warning_code,
         "message": validation.message,
         "suggested_classification_entity_id": (
@@ -1243,7 +1251,6 @@ def create_classification_validation(
         "created_at": validation.created_at,
         "updated_at": validation.updated_at,
     }
-    
 @router.get("/works/{work_entity_id}/source-classifications")
 def get_work_source_classifications(
     work_entity_id: UUID,
@@ -1309,6 +1316,7 @@ def get_work_source_classifications(
             validation_data = {
                 "id": validation.id,
                 "status": validation.status,
+                "origin": validation.origin,
                 "warning_code": validation.warning_code,
                 "message": validation.message,
                 "confidence": validation.confidence,
@@ -1348,4 +1356,43 @@ def get_work_source_classifications(
             "canonical_title": work.canonical_title,
         },
         "source_classifications": results,
+    }
+    
+@router.post("/source-classifications/{source_classification_id}/revalidate")
+def revalidate_source_classification(
+    source_classification_id: UUID,
+    db: Session = Depends(get_db),
+):
+    source_classification = db.get(
+        SourceClassification,
+        source_classification_id,
+    )
+
+    if source_classification is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Source classification not found",
+        )
+
+    validation = revalidate_classification(
+        db,
+        source_classification,
+    )
+
+    return {
+        "id": validation.id,
+        "source_classification_id": validation.source_classification_id,
+        "status": validation.status,
+        "origin": validation.origin,
+        "warning_code": validation.warning_code,
+        "message": validation.message,
+        "suggested_classification_entity_id": (
+            validation.suggested_classification_entity_id
+        ),
+        "confidence": validation.confidence,
+        "validation_method": validation.validation_method,
+        "reviewed_by": validation.reviewed_by,
+        "reviewed_at": validation.reviewed_at,
+        "created_at": validation.created_at,
+        "updated_at": validation.updated_at,
     }
