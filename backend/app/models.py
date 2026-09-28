@@ -257,6 +257,88 @@ class ReconciliationDecision(Base):
         onupdate=utcnow,
         nullable=False,
     )
+    
+class EntityMerge(Base):
+    __tablename__ = "entity_merges"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_entity_id",
+            name="uq_entity_merge_source",
+        ),
+        CheckConstraint(
+            "source_entity_id <> target_entity_id",
+            name="ck_entity_merge_different_entities",
+        ),
+        CheckConstraint(
+            "origin IN ('manual', 'automatic')",
+            name="ck_entity_merge_origin",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)",
+            name="ck_entity_merge_confidence",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    source_entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "entities.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    target_entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "entities.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    origin: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="manual",
+    )
+
+    reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    merge_method: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    confidence: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
 
 class Entity(Base):
     __tablename__ = "entities"
