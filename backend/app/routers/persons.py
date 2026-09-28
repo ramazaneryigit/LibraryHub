@@ -7,7 +7,10 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Entity, Identifier, Nomen, Person
-from ..services.entity_merge import create_entity_merge
+from ..services.entity_merge import (
+    create_entity_merge,
+    resolve_canonical_entity_id,
+)
 from ..services.work_detail import build_work_detail
 
 
@@ -208,7 +211,12 @@ def get_person(
     entity_id: UUID,
     db: Session = Depends(get_db),
 ):
-    person = db.get(Person, entity_id)
+    canonical_entity_id = resolve_canonical_entity_id(
+        db,
+        entity_id,
+    )
+
+    person = db.get(Person, canonical_entity_id)
 
     if person is None:
         raise HTTPException(
@@ -218,7 +226,7 @@ def get_person(
 
     nomens = db.scalars(
         select(Nomen)
-        .where(Nomen.entity_id == entity_id)
+        .where(Nomen.entity_id == canonical_entity_id)
         .order_by(Nomen.preferred.desc(), Nomen.value)
     ).all()
 
@@ -240,7 +248,6 @@ def get_person(
             for nomen in nomens
         ],
     }
-
 @router.post("/{entity_id}/nomens", status_code=201)
 def create_nomen(
     entity_id: UUID,
@@ -602,6 +609,54 @@ def merge_persons(
             origin="manual",
             merge_method="person_merge",
         )
+
+        # 10. Remove active relations from the merged source Person.
+        # Historical/provenance references such as reconciliation candidates
+        # remain attached to the preserved source Entity.
+        for table_name in (
+            "work_agent_relation",
+            "expression_agent_relation",
+            "manifestation_agent_relation",
+            "item_agent_relation",
+        ):
+            db.execute(
+                text(
+                    f"DELETE FROM {table_name} "
+                    "WHERE agent_entity_id = :source_id"
+                ),
+                {"source_id": source_person_id},
+            )
+
+        db.execute(
+            text(
+                "DELETE FROM entity_relation "
+                "WHERE subject_entity_id = :source_id "
+                "OR object_entity_id = :source_id"
+            ),
+            {"source_id": source_person_id},
+        )
+
+        # 11. Remove active source identifiers and nomens after they have
+        # been copied to the canonical target.
+        db.execute(
+            text(
+                "DELETE FROM identifiers "
+                "WHERE entity_id = :source_id"
+            ),
+            {"source_id": source_person_id},
+        )
+
+        db.execute(
+            text(
+                "DELETE FROM nomens "
+                "WHERE entity_id = :source_id"
+            ),
+            {"source_id": source_person_id},
+        )
+
+        # 12. Remove only the Person subtype row.
+        # The source Entity itself is intentionally preserved as a redirect.
+        db.delete(source_person)
 
         db.commit()
 
