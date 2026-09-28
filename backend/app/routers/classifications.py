@@ -11,11 +11,14 @@ from ..db import get_db
 from ..models import (
     Entity,
     Work,
+    CollectiveAgent,
     VocabularyScheme,
     VocabularySchemeEdition,
     ClassificationNode,
     WorkClassification,
     ClassificationMapping,
+    SourceClassification,
+    ClassificationValidation,
 )
 
 
@@ -138,7 +141,61 @@ class ClassificationMappingCreate(BaseModel):
         default=None,
         max_length=200,
     )
+class SourceClassificationCreate(BaseModel):
+    work_entity_id: UUID
+    institution_entity_id: UUID
+    scheme_id: UUID
+    scheme_edition_id: UUID | None = None
 
+    notation: str = Field(
+        min_length=1,
+        max_length=300,
+    )
+
+    source_record_id: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+
+    source_uri: str | None = Field(
+        default=None,
+        max_length=1000,
+    )
+
+    notes: str | None = None
+    
+class ClassificationValidationCreate(BaseModel):
+    source_classification_id: UUID
+
+    status: str = Field(
+        default="unresolved",
+        pattern="^(valid|warning|probable_error|unresolved)$",
+    )
+
+    warning_code: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+
+    message: str | None = None
+
+    suggested_classification_entity_id: UUID | None = None
+
+    confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+    )
+
+    validation_method: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+
+    reviewed_by: str | None = Field(
+        default=None,
+        max_length=200,
+    )
 
 # ============================================================
 # Vocabulary Schemes
@@ -961,4 +1018,317 @@ def delete_classification_mapping(
     return {
         "deleted": True,
         "mapping_id": mapping_id,
+    }
+    
+# ============================================================
+# Source Classification Observations
+# ============================================================
+
+
+@router.post("/source-classifications")
+def create_source_classification(
+    payload: SourceClassificationCreate,
+    db: Session = Depends(get_db),
+):
+    work = db.get(
+        Work,
+        payload.work_entity_id,
+    )
+
+    if work is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Work not found",
+        )
+
+    institution = db.get(
+        CollectiveAgent,
+        payload.institution_entity_id,
+    )
+
+    if institution is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Institution not found",
+        )
+
+    scheme = db.get(
+        VocabularyScheme,
+        payload.scheme_id,
+    )
+
+    if scheme is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vocabulary scheme not found",
+        )
+
+    if payload.scheme_edition_id is not None:
+        scheme_edition = db.get(
+            VocabularySchemeEdition,
+            payload.scheme_edition_id,
+        )
+
+        if scheme_edition is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Vocabulary scheme edition not found",
+            )
+
+        if scheme_edition.scheme_id != payload.scheme_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Vocabulary scheme edition does not "
+                    "belong to the selected scheme"
+                ),
+            )
+
+    observation = SourceClassification(
+        work_entity_id=payload.work_entity_id,
+        institution_entity_id=payload.institution_entity_id,
+        scheme_id=payload.scheme_id,
+        scheme_edition_id=payload.scheme_edition_id,
+        notation=payload.notation,
+        source_record_id=payload.source_record_id,
+        source_uri=payload.source_uri,
+        notes=payload.notes,
+    )
+
+    db.add(observation)
+
+    try:
+        db.commit()
+        db.refresh(observation)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Source classification observation already exists",
+        )
+
+    return {
+        "id": observation.id,
+        "work": {
+            "entity_id": work.entity_id,
+            "canonical_title": work.canonical_title,
+        },
+        "institution": {
+            "entity_id": institution.entity_id,
+            "canonical_name": institution.canonical_name,
+        },
+        "scheme": {
+            "id": scheme.id,
+            "code": scheme.code,
+            "name": scheme.name,
+        },
+        "scheme_edition_id": observation.scheme_edition_id,
+        "notation": observation.notation,
+        "source_record_id": observation.source_record_id,
+        "source_uri": observation.source_uri,
+        "observed_at": observation.observed_at,
+        "notes": observation.notes,
+    }
+    
+# ============================================================
+# Classification Validations
+# ============================================================
+
+
+@router.post("/classification-validations")
+def create_classification_validation(
+    payload: ClassificationValidationCreate,
+    db: Session = Depends(get_db),
+):
+    source_classification = db.get(
+        SourceClassification,
+        payload.source_classification_id,
+    )
+
+    if source_classification is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Source classification not found",
+        )
+
+    if payload.suggested_classification_entity_id is not None:
+        suggested_classification = db.get(
+            ClassificationNode,
+            payload.suggested_classification_entity_id,
+        )
+
+        if suggested_classification is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Suggested classification not found",
+            )
+
+        if suggested_classification.scheme_id != source_classification.scheme_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Suggested classification must belong "
+                    "to the same vocabulary scheme"
+                ),
+            )
+
+    existing = db.scalar(
+        select(ClassificationValidation).where(
+            ClassificationValidation.source_classification_id
+            == payload.source_classification_id
+        )
+    )
+
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Classification validation already exists",
+        )
+
+    validation = ClassificationValidation(
+        source_classification_id=payload.source_classification_id,
+        status=payload.status,
+        warning_code=payload.warning_code,
+        message=payload.message,
+        suggested_classification_entity_id=(
+            payload.suggested_classification_entity_id
+        ),
+        confidence=payload.confidence,
+        validation_method=payload.validation_method,
+        reviewed_by=payload.reviewed_by,
+    )
+
+    db.add(validation)
+
+    try:
+        db.commit()
+        db.refresh(validation)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Classification validation already exists",
+        )
+
+    return {
+        "id": validation.id,
+        "source_classification_id": validation.source_classification_id,
+        "status": validation.status,
+        "warning_code": validation.warning_code,
+        "message": validation.message,
+        "suggested_classification_entity_id": (
+            validation.suggested_classification_entity_id
+        ),
+        "confidence": validation.confidence,
+        "validation_method": validation.validation_method,
+        "reviewed_by": validation.reviewed_by,
+        "reviewed_at": validation.reviewed_at,
+        "created_at": validation.created_at,
+        "updated_at": validation.updated_at,
+    }
+    
+@router.get("/works/{work_entity_id}/source-classifications")
+def get_work_source_classifications(
+    work_entity_id: UUID,
+    db: Session = Depends(get_db),
+):
+    work = db.get(
+        Work,
+        work_entity_id,
+    )
+
+    if work is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Work not found",
+        )
+
+    observations = db.scalars(
+        select(SourceClassification)
+        .where(
+            SourceClassification.work_entity_id == work_entity_id
+        )
+        .order_by(SourceClassification.observed_at)
+    ).all()
+
+    results = []
+
+    for observation in observations:
+        institution = db.get(
+            CollectiveAgent,
+            observation.institution_entity_id,
+        )
+
+        scheme = db.get(
+            VocabularyScheme,
+            observation.scheme_id,
+        )
+
+        validation = db.scalar(
+            select(ClassificationValidation).where(
+                ClassificationValidation.source_classification_id
+                == observation.id
+            )
+        )
+
+        validation_data = None
+
+        if validation is not None:
+            suggested_classification = None
+
+            if validation.suggested_classification_entity_id is not None:
+                suggested_node = db.get(
+                    ClassificationNode,
+                    validation.suggested_classification_entity_id,
+                )
+
+                if suggested_node is not None:
+                    suggested_classification = {
+                        "entity_id": suggested_node.entity_id,
+                        "notation": suggested_node.notation,
+                        "caption": suggested_node.caption,
+                    }
+
+            validation_data = {
+                "id": validation.id,
+                "status": validation.status,
+                "warning_code": validation.warning_code,
+                "message": validation.message,
+                "confidence": validation.confidence,
+                "validation_method": validation.validation_method,
+                "suggested_classification": suggested_classification,
+                "reviewed_by": validation.reviewed_by,
+                "reviewed_at": validation.reviewed_at,
+                "created_at": validation.created_at,
+                "updated_at": validation.updated_at,
+            }
+
+        results.append(
+            {
+                "id": observation.id,
+                "institution": {
+                    "entity_id": institution.entity_id,
+                    "canonical_name": institution.canonical_name,
+                },
+                "scheme": {
+                    "id": scheme.id,
+                    "code": scheme.code,
+                    "name": scheme.name,
+                },
+                "scheme_edition_id": observation.scheme_edition_id,
+                "notation": observation.notation,
+                "source_record_id": observation.source_record_id,
+                "source_uri": observation.source_uri,
+                "observed_at": observation.observed_at,
+                "notes": observation.notes,
+                "validation": validation_data,
+            }
+        )
+
+    return {
+        "work": {
+            "entity_id": work.entity_id,
+            "canonical_title": work.canonical_title,
+        },
+        "source_classifications": results,
     }
