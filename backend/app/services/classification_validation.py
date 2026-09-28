@@ -34,6 +34,30 @@ def is_valid_ddc_notation(notation: str) -> bool:
         )
     )
     
+def is_valid_lcc_notation(notation: str) -> bool:
+    """
+    Validate the basic syntactic form of an LCC notation.
+
+    Examples accepted:
+    Z
+    Z665
+    Z665.2
+    QA76
+    QA76.73
+
+    This checks notation syntax only.
+    It does not prove that the number exists in the LCC schedules.
+    """
+
+    value = notation.strip().upper()
+
+    return bool(
+        re.fullmatch(
+            r"[A-Z]{1,3}(?:\d+(?:\.\d+)?)?",
+            value,
+        )
+    )
+    
 def evaluate_source_classification(
     db: Session,
     source_classification: SourceClassification,
@@ -51,20 +75,21 @@ def evaluate_source_classification(
         source_classification.scheme_id,
     )
 
+        
     if (
         scheme is not None
-        and scheme.code.upper() == "DDC"
-        and not is_valid_ddc_notation(source_classification.notation)
+        and scheme.code.upper() == "LCC"
+        and not is_valid_lcc_notation(source_classification.notation)
     ):
         return {
             "status": "warning",
             "warning_code": "INVALID_NOTATION",
             "message": (
-                "Kaynak sınıflama değeri temel DDC "
+                "Kaynak sınıflama değeri temel LCC "
                 "notasyon biçimine uymuyor."
             ),
             "confidence": 1.0,
-            "validation_method": "ddc_syntax_validation",
+            "validation_method": "lcc_syntax_validation",
             "suggested_classification_entity_id": None,
         }
 
@@ -138,3 +163,42 @@ def evaluate_source_classification(
         "validation_method": "normalized_comparison",
         "suggested_classification_entity_id": suggested_node.entity_id,
     }
+    
+def create_automatic_validation(
+    db: Session,
+    source_classification: SourceClassification,
+):
+    from ..models import ClassificationValidation
+
+    existing = db.scalar(
+        select(ClassificationValidation).where(
+            ClassificationValidation.source_classification_id
+            == source_classification.id
+        )
+    )
+
+    if existing is not None:
+        return existing
+
+    result = evaluate_source_classification(
+        db,
+        source_classification,
+    )
+
+    validation = ClassificationValidation(
+        source_classification_id=source_classification.id,
+        status=result["status"],
+        warning_code=result["warning_code"],
+        message=result["message"],
+        suggested_classification_entity_id=(
+            result["suggested_classification_entity_id"]
+        ),
+        confidence=result["confidence"],
+        validation_method=result["validation_method"],
+    )
+
+    db.add(validation)
+    db.commit()
+    db.refresh(validation)
+
+    return validation
