@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Entity, Identifier, Nomen, Person
+from ..services.entity_merge import create_entity_merge
 from ..services.work_detail import build_work_detail
 
 
@@ -277,7 +278,7 @@ def create_nomen(
         "value": nomen.value,
         "preferred": nomen.preferred,
     }
-    
+
 @router.get("/{entity_id}/works")
 def get_person_works(
     entity_id: UUID,
@@ -593,16 +594,15 @@ def merge_persons(
 
             db.add(new_nomen)
 
-        # 9. Delete source Entity
-        source_entity = db.get(Entity, source_person_id)
+        # 9. Preserve source Entity and create canonical redirect
+        create_entity_merge(
+            db,
+            source_person_id,
+            target_person_id,
+            origin="manual",
+            merge_method="person_merge",
+        )
 
-        if source_entity is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Source entity not found",
-            )
-
-        db.delete(source_entity)
         db.commit()
 
     except HTTPException:

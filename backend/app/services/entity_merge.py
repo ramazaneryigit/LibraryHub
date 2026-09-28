@@ -148,7 +148,6 @@ def create_entity_merge(
     )
 
     db.add(merge)
-    db.commit()
-    db.refresh(merge)
+    db.flush()
 
     return merge
