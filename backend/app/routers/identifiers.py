@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from ..services.entity_merge import resolve_canonical_entity_id
 
 from ..db import get_db
 from ..models import Entity, Identifier
@@ -25,14 +26,19 @@ def get_entity_identifiers(
     entity_id: UUID,
     db: Session = Depends(get_db),
 ):
-    entity = db.get(Entity, entity_id)
+    canonical_entity_id = resolve_canonical_entity_id(
+        db,
+        entity_id,
+    )
+
+    entity = db.get(Entity, canonical_entity_id)
 
     if entity is None:
         raise HTTPException(status_code=404, detail="Entity not found")
 
     identifiers = db.execute(
         select(Identifier)
-        .where(Identifier.entity_id == entity_id)
+        .where(Identifier.entity_id == canonical_entity_id)
         .order_by(
             Identifier.preferred.desc(),
             Identifier.scheme,
@@ -41,7 +47,7 @@ def get_entity_identifiers(
     ).scalars().all()
 
     return {
-        "entity_id": str(entity.id),
+        "entity_id": str(canonical_entity_id),
         "entity_type": entity.entity_type,
         "identifiers": [
             {
@@ -55,20 +61,24 @@ def get_entity_identifiers(
         ],
     }
 
-
 @router.post("/entities/{entity_id}/identifiers", status_code=201)
 def create_entity_identifier(
     entity_id: UUID,
     payload: IdentifierCreate,
     db: Session = Depends(get_db),
 ):
-    entity = db.get(Entity, entity_id)
+    canonical_entity_id = resolve_canonical_entity_id(
+        db,
+        entity_id,
+    )
+
+    entity = db.get(Entity, canonical_entity_id)
 
     if entity is None:
         raise HTTPException(status_code=404, detail="Entity not found")
 
     identifier = Identifier(
-        entity_id=entity_id,
+        entity_id=canonical_entity_id,
         scheme=payload.scheme.strip().lower(),
         value=payload.value.strip(),
         qualifier=payload.qualifier.strip() if payload.qualifier else None,
