@@ -291,7 +291,12 @@ def get_person_works(
     entity_id: UUID,
     db: Session = Depends(get_db),
 ):
-    person = db.get(Person, entity_id)
+    canonical_entity_id = resolve_canonical_entity_id(
+        db,
+        entity_id,
+    )
+
+    person = db.get(Person, canonical_entity_id)
 
     if person is None:
         raise HTTPException(
@@ -337,7 +342,7 @@ def get_person_works(
             """
         ),
         {
-            "entity_id": entity_id,
+            "entity_id": canonical_entity_id,
         },
     ).mappings().all()
 
@@ -364,6 +369,7 @@ def get_person_works(
         "biography": person.biography,
         "works": works,
     }
+
 @router.post("/{source_person_id}/merge/{target_person_id}")
 def merge_persons(
     source_person_id: UUID,
