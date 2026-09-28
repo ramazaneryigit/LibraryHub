@@ -388,7 +388,16 @@ def merge_persons(
         )
 
     source_person = db.get(Person, source_person_id)
-    target_person = db.get(Person, target_person_id)
+
+    canonical_target_person_id = resolve_canonical_entity_id(
+        db,
+        target_person_id,
+    )
+
+    target_person = db.get(
+        Person,
+        canonical_target_person_id,
+    )
 
     if source_person is None:
         raise HTTPException(
@@ -682,6 +691,6 @@ def merge_persons(
     return {
         "status": "merged",
         "source_person_id": str(source_person_id),
-        "target_person_id": str(target_person_id),
+        "target_person_id": str(canonical_target_person_id),
         "target_canonical_name": target_person.canonical_name,
     }
