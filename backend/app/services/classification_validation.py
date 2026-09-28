@@ -1,13 +1,39 @@
+import re
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
 
 from ..models import (
     ClassificationNode,
     SourceClassification,
+    VocabularyScheme,
     WorkClassification,
 )
 
+def is_valid_ddc_notation(notation: str) -> bool:
+    """
+    Validate the basic syntactic form of a DDC notation.
 
+    Examples accepted:
+    020
+    641
+    641.5
+    641.594
+
+    This checks notation syntax only.
+    It does not prove that the number exists in a specific DDC edition.
+    """
+
+    value = notation.strip()
+
+    return bool(
+        re.fullmatch(
+            r"\d{3}(?:\.\d+)?",
+            value,
+        )
+    )
+    
 def evaluate_source_classification(
     db: Session,
     source_classification: SourceClassification,
@@ -19,6 +45,28 @@ def evaluate_source_classification(
     This function only evaluates.
     It does not create or update database records.
     """
+
+    scheme = db.get(
+        VocabularyScheme,
+        source_classification.scheme_id,
+    )
+
+    if (
+        scheme is not None
+        and scheme.code.upper() == "DDC"
+        and not is_valid_ddc_notation(source_classification.notation)
+    ):
+        return {
+            "status": "warning",
+            "warning_code": "INVALID_NOTATION",
+            "message": (
+                "Kaynak sınıflama değeri temel DDC "
+                "notasyon biçimine uymuyor."
+            ),
+            "confidence": 1.0,
+            "validation_method": "ddc_syntax_validation",
+            "suggested_classification_entity_id": None,
+        }
 
     normalized_rows = db.execute(
         select(
@@ -90,42 +138,3 @@ def evaluate_source_classification(
         "validation_method": "normalized_comparison",
         "suggested_classification_entity_id": suggested_node.entity_id,
     }
-    
-def create_automatic_validation(
-    db: Session,
-    source_classification: SourceClassification,
-):
-    from ..models import ClassificationValidation
-
-    existing = db.scalar(
-        select(ClassificationValidation).where(
-            ClassificationValidation.source_classification_id
-            == source_classification.id
-        )
-    )
-
-    if existing is not None:
-        return existing
-
-    result = evaluate_source_classification(
-        db,
-        source_classification,
-    )
-
-    validation = ClassificationValidation(
-        source_classification_id=source_classification.id,
-        status=result["status"],
-        warning_code=result["warning_code"],
-        message=result["message"],
-        suggested_classification_entity_id=(
-            result["suggested_classification_entity_id"]
-        ),
-        confidence=result["confidence"],
-        validation_method=result["validation_method"],
-    )
-
-    db.add(validation)
-    db.commit()
-    db.refresh(validation)
-
-    return validation
