@@ -254,7 +254,12 @@ def create_nomen(
     payload: NomenCreate,
     db: Session = Depends(get_db),
 ):
-    person = db.get(Person, entity_id)
+    canonical_entity_id = resolve_canonical_entity_id(
+        db,
+        entity_id,
+    )
+
+    person = db.get(Person, canonical_entity_id)
 
     if person is None:
         raise HTTPException(
@@ -264,7 +269,7 @@ def create_nomen(
 
     nomen = Nomen(
         id=uuid4(),
-        entity_id=entity_id,
+        entity_id=canonical_entity_id,
         value=payload.value,
         language=payload.language,
         script=payload.script,
@@ -281,7 +286,7 @@ def create_nomen(
 
     return {
         "id": str(nomen.id),
-        "entity_id": str(entity_id),
+        "entity_id": str(canonical_entity_id),
         "value": nomen.value,
         "preferred": nomen.preferred,
     }
