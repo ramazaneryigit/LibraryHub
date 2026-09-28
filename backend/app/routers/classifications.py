@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from ..services.classification_validation import create_automatic_validation
 
 from ..db import get_db
 from ..models import (
@@ -1107,6 +1108,11 @@ def create_source_classification(
             detail="Source classification observation already exists",
         )
 
+    validation = create_automatic_validation(
+        db,
+        observation,
+    )
+
     return {
         "id": observation.id,
         "work": {
@@ -1128,6 +1134,17 @@ def create_source_classification(
         "source_uri": observation.source_uri,
         "observed_at": observation.observed_at,
         "notes": observation.notes,
+        "validation": {
+            "id": validation.id,
+            "status": validation.status,
+            "warning_code": validation.warning_code,
+            "message": validation.message,
+            "suggested_classification_entity_id": (
+                validation.suggested_classification_entity_id
+            ),
+            "confidence": validation.confidence,
+            "validation_method": validation.validation_method,
+        },
     }
     
 # ============================================================
