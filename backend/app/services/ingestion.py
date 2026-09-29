@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import SourceRecord
+from ..models import IngestionBatch, SourceRecord
 
 
 def normalize_institution_entity_id(
@@ -296,6 +296,141 @@ def ingest_jsonl_stream(
     }
 
     batch = []
+
+    def process_batch():
+        if not batch:
+            return
+
+        batch_result = ingest_source_records(
+            db=db,
+            source_system=source_system,
+            records=batch,
+        )
+
+        result["created"] += batch_result["created"]
+        result["updated"] += batch_result["updated"]
+        result["unchanged"] += batch_result["unchanged"]
+        result["failed"] += batch_result["failed"]
+
+        result["errors"].extend(
+            batch_result["errors"]
+        )
+
+        result["batches"] += 1
+
+        batch.clear()
+
+    for line_number, raw_line in enumerate(
+        stream,
+        start=1,
+    ):
+        result["total"] += 1
+
+        try:
+            if isinstance(raw_line, bytes):
+                raw_line = raw_line.decode(
+                    "utf-8"
+                )
+
+            line = raw_line.strip()
+
+            if not line:
+                result["total"] -= 1
+                continue
+
+            record = json.loads(line)
+
+            if not isinstance(record, dict):
+                raise ValueError(
+                    "JSONL line must contain an object"
+                )
+
+            batch.append(record)
+
+            if len(batch) >= batch_size:
+                process_batch()
+
+        except Exception as exc:
+            result["failed"] += 1
+
+            result["errors"].append(
+                {
+                    "line": line_number,
+                    "error": str(exc),
+                }
+            )
+
+    process_batch()
+
+    return result
+    
+def ingest_jsonl_job(
+    db: Session,
+    source_system: str,
+    stream,
+    batch_size: int = 500,
+) -> dict:
+    job = IngestionBatch(
+        source_system=source_system,
+        status="running",
+        total=0,
+        created=0,
+        updated=0,
+        unchanged=0,
+        failed=0,
+    )
+
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    try:
+        result = ingest_jsonl_stream(
+            db=db,
+            source_system=source_system,
+            stream=stream,
+            batch_size=batch_size,
+        )
+
+        job.total = result["total"]
+        job.created = result["created"]
+        job.updated = result["updated"]
+        job.unchanged = result["unchanged"]
+        job.failed = result["failed"]
+        job.finished_at = datetime.now(
+            timezone.utc
+        )
+
+        if result["failed"] > 0:
+            job.status = "completed_with_errors"
+        else:
+            job.status = "completed"
+
+        db.commit()
+        db.refresh(job)
+
+        return {
+            "batch_id": str(job.id),
+            "status": job.status,
+            **result,
+        }
+
+    except Exception:
+        db.rollback()
+
+        job = db.get(
+            IngestionBatch,
+            job.id,
+        )
+
+        if job is not None:
+            job.status = "failed"
+            job.finished_at = datetime.now(
+                timezone.utc
+            )
+            db.commit()
+
+        raise
 
     def process_batch():
         if not batch:

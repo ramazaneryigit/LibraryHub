@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services.ingestion import (
-    ingest_jsonl_stream,
+    ingest_jsonl_job,
     ingest_source_records,
 )
 
@@ -71,7 +71,7 @@ def ingest_jsonl_file(
         )
 
     try:
-        return ingest_jsonl_stream(
+        return ingest_jsonl_job(
             db=db,
             source_system=source_system,
             stream=file.file,
