@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Entity, Item, Manifestation
+from ..services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(tags=["items"])
@@ -26,9 +27,14 @@ def create_item(
     payload: ItemCreate,
     db: Session = Depends(get_db),
 ):
+    canonical_manifestation_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=payload.manifestation_entity_id,
+    )
+
     manifestation = db.get(
         Manifestation,
-        payload.manifestation_entity_id,
+        canonical_manifestation_entity_id,
     )
 
     if manifestation is None:
@@ -70,7 +76,7 @@ def create_item(
                 )
             """),
             {
-                "manifestation_entity_id": payload.manifestation_entity_id,
+                "manifestation_entity_id": canonical_manifestation_entity_id,
                 "item_entity_id": entity_id,
             },
         )
@@ -85,7 +91,7 @@ def create_item(
         "entity_id": str(entity_id),
         "entity_type": "ITEM",
         "manifestation_entity_id": str(
-            payload.manifestation_entity_id
+            canonical_manifestation_entity_id
         ),
         "barcode": item.barcode,
         "shelfmark": item.shelfmark,
