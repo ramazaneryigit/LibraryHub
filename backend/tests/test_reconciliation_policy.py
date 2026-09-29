@@ -191,6 +191,86 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(any("conflict" in code for code in result["reason_codes"]))
 
 
+    def fresh_candidate(self):
+        self.candidate(.1)
+        return generate_work_candidates(self.db, self.source)[0]
+
+    def test_generated_inputs_are_fresh(self):
+        self.fresh_candidate()
+        result = self.evaluate()
+        self.assertEqual(result["top_candidate"]["freshness"]["status"], "fresh")
+        self.assertTrue(result["stored_candidate_inputs_current"])
+        self.assertFalse(result["requires_candidate_regeneration"])
+        self.assertNotIn("candidate_freshness_not_verified", result["reason_codes"])
+
+    def test_changed_source_is_stale_and_regeneration_restores_freshness(self):
+        candidate = self.fresh_candidate()
+        original_evidence = candidate.evidence.copy()
+        self.source.raw_data = {**self.source.raw_data, "language": "en"}
+        self.db.commit()
+        result = self.evaluate()
+        self.assertEqual(result["top_candidate"]["freshness"]["status"], "stale")
+        self.assertIn("source_data_changed", result["top_candidate"]["freshness"]["reason_codes"])
+        self.assertTrue(result["requires_candidate_regeneration"])
+        self.assertEqual(candidate.evidence, original_evidence)
+        regenerated = generate_work_candidates(self.db, self.source)[0]
+        self.assertEqual(regenerated.id, candidate.id)
+        self.assertEqual(self.evaluate()["top_candidate"]["freshness"]["status"], "fresh")
+
+    def test_each_scoring_work_field_invalidates_evidence(self):
+        candidate = self.fresh_candidate()
+        work = self.db.get(Work, candidate.candidate_entity_id)
+        for field, value in [("canonical_title", "Bilgi Yönetimi Giriş"),
+                             ("original_language", "en"), ("work_type", "novel")]:
+            with self.subTest(field=field):
+                setattr(work, field, value)
+                self.db.commit()
+                freshness = self.evaluate()["top_candidate"]["freshness"]
+                self.assertEqual(freshness["status"], "stale")
+                self.assertIn("work_data_changed", freshness["reason_codes"])
+                generate_work_candidates(self.db, self.source)
+                self.assertEqual(self.evaluate()["top_candidate"]["freshness"]["status"], "fresh")
+
+    def test_source_key_order_does_not_invalidate_evidence(self):
+        self.fresh_candidate()
+        self.source.raw_data = dict(reversed(list(self.source.raw_data.items())))
+        self.db.commit()
+        self.assertEqual(self.evaluate()["top_candidate"]["freshness"]["status"], "fresh")
+
+    def test_redirect_invalidates_prior_canonical_identity(self):
+        a = self.fresh_candidate()
+        b = self.candidate(.1)
+        self.db.add(EntityMerge(source_entity_id=a.candidate_entity_id, target_entity_id=b.candidate_entity_id))
+        self.db.commit()
+        result = self.evaluate()
+        self.assertEqual(result["distinct_candidate_count"], 1)
+        self.assertIn("canonical_identity_changed", result["top_candidate"]["freshness"]["reason_codes"])
+
+    def test_old_and_malformed_fingerprints_are_unknown(self):
+        candidate = self.candidate(.9)
+        self.assertEqual(self.evaluate()["top_candidate"]["freshness"]["status"], "unknown")
+        for snapshot in [{"version": "future"}, {"version": "work_inputs_v1", "source_hash": []}]:
+            candidate.evidence = {"input_fingerprints": snapshot}
+            self.db.commit()
+            self.assertEqual(self.evaluate()["top_candidate"]["freshness"]["status"], "unknown")
+
+    def test_method_change_is_stale(self):
+        candidate = self.fresh_candidate()
+        candidate.method = "work_fuzzy_title_v3"
+        self.db.commit()
+        self.assertIn("matching_method_changed", self.evaluate()["top_candidate"]["freshness"]["reason_codes"])
+
+    def test_unmatched_old_candidate_remains_stale_after_generation(self):
+        candidate = self.fresh_candidate()
+        self.source.raw_data = {"title": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"}
+        self.db.commit()
+        self.assertEqual(generate_work_candidates(self.db, self.source), [])
+        result = self.evaluate()
+        self.assertEqual(result["candidate_count"], 1)
+        self.assertEqual(result["top_candidate"]["freshness"]["status"], "stale")
+        self.assertFalse(result["stored_candidate_inputs_current"])
+
+
 
 if __name__ == '__main__':
     unittest.main()

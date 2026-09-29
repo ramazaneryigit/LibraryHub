@@ -11,6 +11,7 @@ from ..models import (
     Work,
 )
 from .entity_merge import resolve_canonical_entity_id
+from .reconciliation_freshness import METHOD, capture_inputs
 
 
 def normalize_text(value: str | None) -> str | None:
@@ -169,7 +170,8 @@ def generate_work_candidates(
             "work_type_score": 0.0,
         }
 
-        evidence["evidence_version"] = "work_fields_v1"
+        evidence["evidence_version"] = "work_fields_v2"
+        evidence["input_fingerprints"] = capture_inputs(source_record, canonical_work)
         evidence["field_comparisons"] = {
             "language": compare_field(raw_data.get("language"), canonical_work.original_language),
             "work_type": compare_field(raw_data.get("work_type"), canonical_work.work_type),
@@ -197,7 +199,7 @@ def generate_work_candidates(
         if existing_candidate is not None:
             existing_candidate.score = score
             existing_candidate.method = (
-                "work_fuzzy_title_v3"
+                METHOD
             )
             existing_candidate.evidence = evidence
 
@@ -210,7 +212,7 @@ def generate_work_candidates(
             source_record_id=source_record.id,
             candidate_entity_id=canonical_entity_id,
             score=score,
-            method="work_fuzzy_title_v3",
+            method=METHOD,
             evidence=evidence,
         )
 

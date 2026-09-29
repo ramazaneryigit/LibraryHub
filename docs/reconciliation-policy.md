@@ -21,9 +21,9 @@ Scores are ranking signals, not probabilities. The preview does not infer that a
 large margin proves identity. Legacy evidence cannot distinguish every missing
 field from a conflicting field; new generation includes explicit field comparisons. Stored candidates are not bound to source or
 canonical data versions, and generation can update existing candidate evidence
-while retaining older unmatched candidates. Therefore every response explicitly
-reports `candidate_freshness_not_verified`. Versioned evidence, creator/identifier
-signals and a labeled pilot dataset are prerequisites for automatic acceptance.
+while retaining older unmatched candidates. Policy v3 checks stored-candidate input freshness as described below. Immutable
+evidence history, creator/identifier signals and a labeled pilot dataset remain
+prerequisites for automatic acceptance.
 The existing decision POST can still accept caller-supplied automatic decisions;
 this preview is not an authorization or enforcement gate for that endpoint.
 
@@ -49,7 +49,7 @@ Invoke-RestMethod 'http://localhost:8010/reconciliation/source-records/bb673bb2-
 
 A single candidate must have a null margin and automatic acceptance disabled.
 
-## Field evidence v1 / policy v2
+## Field evidence v1 / policy v2 (previous release)
 
 Newly generated candidates use `work_fuzzy_title_v3` with the same scoring weights.
 `evidence.field_comparisons.language` and `.work_type` retain original and normalized
@@ -63,3 +63,37 @@ is only upgraded when candidate generation is explicitly run, not on evaluation 
 Legacy evidence is reported as unavailable rather than interpreted as a conflict.
 Policy `work_review_v2` reports comparison issues for the top representative candidate;
 all group members retain their own evidence. Freshness remains unverified.
+
+
+## Input freshness v1 / policy v3
+
+New generation uses `work_fuzzy_title_v4` and `work_fields_v2`. It stores SHA-256
+fingerprints plus `generated_at` inside the existing evidence JSON; no migration
+is needed. Hashes cover the full source raw_data, source ID and record type, and
+canonical Work ID, title, original language and work type. JSON key ordering does
+not affect hashes; original values are fingerprinted, so even a change erased by
+normalization conservatively requires regeneration. Source content_hash is not
+trusted as a substitute for hashing actual inputs.
+
+Each ranked member, and each group's highest-scoring representative, exposes:
+
+- `freshness.status = fresh`: stored inputs and method match current values.
+- `stale`: source/Work data, canonical identity or matching method changed.
+- `unknown`: fingerprints are absent, malformed or from an unsupported version.
+
+The response includes `freshness_counts`, `requires_candidate_regeneration` and
+`stored_candidate_inputs_current`. Excluded invalid canonical candidates remain
+reported separately and prevent `stored_candidate_inputs_current` from being true.
+The regeneration flag concerns stale/unknown stored inputs, not missing/cyclic
+canonical entities that may need a separate integrity repair.
+
+Evaluation remains read-only, with automatic acceptance disabled. Rankings and
+margins still reflect STORED scores, including stale or unknown candidates; read
+freshness before interpreting them. Candidates that no longer meet retrieval
+criteria are preserved and flagged stale rather than silently deleted.
+
+Freshness is a comparison at read time, not a signed audit trail, a guarantee
+against concurrent changes, or a guarantee that retrieval covers newly added
+Works. It does not cover creator/identifier data not yet used by this scorer.
+Generation still replaces evidence on existing candidates; immutable decision and
+candidate history remains a separate future task.

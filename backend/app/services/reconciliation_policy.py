@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 
 from ..models import ReconciliationCandidate, ReconciliationDecision, SourceRecord, Work
 from .entity_merge import EntityMergeCycleError, resolve_canonical_entity_id
+from .reconciliation_freshness import check_freshness
 
-POLICY_VERSION = "work_review_v2"
+POLICY_VERSION = "work_review_v3"
 
 
 def evaluate_work_reconciliation(db: Session, source: SourceRecord) -> dict:
@@ -31,7 +32,8 @@ def evaluate_work_reconciliation(db: Session, source: SourceRecord) -> dict:
         except EntityMergeCycleError:
             excluded.append({"candidate_id": candidate.id, "reason": "canonical_cycle"})
             continue
-        if db.get(Work, canonical_id) is None:
+        canonical_work = db.get(Work, canonical_id)
+        if canonical_work is None:
             excluded.append({"candidate_id": candidate.id, "reason": "canonical_work_missing"})
             continue
         member = {
@@ -40,6 +42,7 @@ def evaluate_work_reconciliation(db: Session, source: SourceRecord) -> dict:
             "score": candidate.score,
             "method": candidate.method,
             "evidence": candidate.evidence,
+            "freshness": check_freshness(source, canonical_work, candidate),
         }
         if canonical_id not in groups:
             groups[canonical_id] = {
@@ -56,7 +59,16 @@ def evaluate_work_reconciliation(db: Session, source: SourceRecord) -> dict:
     top = ranking[0] if ranking else None
     second = ranking[1] if len(ranking) > 1 else None
     margin = round(top["score"] - second["score"], 8) if second else None
-    reasons = ["automatic_acceptance_not_calibrated", "candidate_freshness_not_verified"]
+    freshness_counts = {"fresh": 0, "stale": 0, "unknown": 0}
+    for group in ranking:
+        group["freshness"] = group["members"][0]["freshness"]
+        for member in group["members"]:
+            freshness_counts[member["freshness"]["status"]] += 1
+    reasons = ["automatic_acceptance_not_calibrated"]
+    if freshness_counts["stale"]:
+        reasons.append("candidate_evidence_stale")
+    if freshness_counts["unknown"]:
+        reasons.append("candidate_freshness_not_verified")
     if not ranking:
         reasons.append("no_usable_candidates")
     elif second is None:
@@ -96,6 +108,13 @@ def evaluate_work_reconciliation(db: Session, source: SourceRecord) -> dict:
         "automatic_acceptance_eligible": False,
         "reason_codes": reasons,
         "missing_source_fields": missing_fields,
+        "freshness_counts": freshness_counts,
+        "requires_candidate_regeneration": bool(
+            freshness_counts["stale"] or freshness_counts["unknown"]
+        ),
+        "stored_candidate_inputs_current": bool(ranking) and not excluded and not (
+            freshness_counts["stale"] or freshness_counts["unknown"]
+        ),
         "candidate_count": len(candidates),
         "distinct_candidate_count": len(ranking),
         "top_candidate": top,
