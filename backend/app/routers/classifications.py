@@ -10,6 +10,7 @@ from ..services.classification_validation import (
     create_automatic_validation,
     revalidate_classification,
 )
+from ..services.entity_merge import resolve_canonical_entity_id
 
 from ..db import get_db
 from ..models import (
@@ -542,9 +543,14 @@ def get_classification(
     entity_id: UUID,
     db: Session = Depends(get_db),
 ):
+    canonical_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=entity_id,
+    )
+
     classification = db.get(
         ClassificationNode,
-        entity_id,
+        canonical_entity_id,
     )
 
     if not classification:
@@ -573,7 +579,6 @@ def get_classification(
         "status": classification.status,
     }
 
-
 # ============================================================
 # Work Classification Assignments
 # ============================================================
@@ -585,9 +590,19 @@ def assign_work_classification(
     payload: WorkClassificationCreate,
     db: Session = Depends(get_db),
 ):
+    canonical_work_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=work_entity_id,
+    )
+
+    canonical_classification_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=payload.classification_entity_id,
+    )
+
     work = db.get(
         Work,
-        work_entity_id,
+        canonical_work_entity_id,
     )
 
     if not work:
@@ -598,7 +613,7 @@ def assign_work_classification(
 
     classification = db.get(
         ClassificationNode,
-        payload.classification_entity_id,
+        canonical_classification_entity_id,
     )
 
     if not classification:
@@ -609,9 +624,10 @@ def assign_work_classification(
 
     existing = db.scalar(
         select(WorkClassification).where(
-            WorkClassification.work_entity_id == work_entity_id,
+            WorkClassification.work_entity_id
+            == canonical_work_entity_id,
             WorkClassification.classification_entity_id
-            == payload.classification_entity_id,
+            == canonical_classification_entity_id,
         )
     )
 
@@ -625,9 +641,9 @@ def assign_work_classification(
         )
 
     assignment = WorkClassification(
-        work_entity_id=work_entity_id,
+        work_entity_id=canonical_work_entity_id,
         classification_entity_id=(
-            payload.classification_entity_id
+            canonical_classification_entity_id
         ),
         is_primary=payload.is_primary,
         assigned_by=payload.assigned_by,
@@ -660,15 +676,19 @@ def assign_work_classification(
         "source": assignment.source,
     }
 
-
 @router.get("/works/{work_entity_id}/classifications")
 def get_work_classifications(
     work_entity_id: UUID,
     db: Session = Depends(get_db),
 ):
+    canonical_work_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=work_entity_id,
+    )
+
     work = db.get(
         Work,
-        work_entity_id,
+        canonical_work_entity_id,
     )
 
     if not work:
@@ -695,7 +715,7 @@ def get_work_classifications(
         )
         .where(
             WorkClassification.work_entity_id
-            == work_entity_id
+            == canonical_work_entity_id
         )
         .order_by(
             VocabularyScheme.code,
@@ -737,21 +757,25 @@ def get_work_classifications(
         "canonical_title": work.canonical_title,
         "classifications": classifications,
     }
-
-
-# ============================================================
-# Classification Mappings
-# ============================================================
-
-
+    
 @router.post("/classification-mappings")
 def create_classification_mapping(
     payload: ClassificationMappingCreate,
     db: Session = Depends(get_db),
 ):
+    canonical_source_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=payload.source_classification_entity_id,
+    )
+
+    canonical_target_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=payload.target_classification_entity_id,
+    )
+
     source_node = db.get(
         ClassificationNode,
-        payload.source_classification_entity_id,
+        canonical_source_entity_id,
     )
 
     if source_node is None:
@@ -762,7 +786,7 @@ def create_classification_mapping(
 
     target_node = db.get(
         ClassificationNode,
-        payload.target_classification_entity_id,
+        canonical_target_entity_id,
     )
 
     if target_node is None:
@@ -771,10 +795,7 @@ def create_classification_mapping(
             detail="Target classification not found",
         )
 
-    if (
-        payload.source_classification_entity_id
-        == payload.target_classification_entity_id
-    ):
+    if canonical_source_entity_id == canonical_target_entity_id:
         raise HTTPException(
             status_code=400,
             detail="A classification cannot be mapped to itself",
@@ -793,9 +814,9 @@ def create_classification_mapping(
         db.query(ClassificationMapping)
         .filter(
             ClassificationMapping.source_classification_entity_id
-            == payload.source_classification_entity_id,
+            == canonical_source_entity_id,
             ClassificationMapping.target_classification_entity_id
-            == payload.target_classification_entity_id,
+            == canonical_target_entity_id,
             ClassificationMapping.mapping_type
             == payload.mapping_type,
         )
@@ -810,10 +831,10 @@ def create_classification_mapping(
 
     mapping = ClassificationMapping(
         source_classification_entity_id=(
-            payload.source_classification_entity_id
+            canonical_source_entity_id
         ),
         target_classification_entity_id=(
-            payload.target_classification_entity_id
+            canonical_target_entity_id
         ),
         mapping_type=payload.mapping_type,
         confidence=payload.confidence,
@@ -897,9 +918,14 @@ def get_classification_mappings(
     entity_id: UUID,
     db: Session = Depends(get_db),
 ):
+    canonical_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=entity_id,
+    )
+
     node = db.get(
         ClassificationNode,
-        entity_id,
+        canonical_entity_id,
     )
 
     if node is None:
@@ -913,11 +939,11 @@ def get_classification_mappings(
         .filter(
             (
                 ClassificationMapping.source_classification_entity_id
-                == entity_id
+                == canonical_entity_id
             )
             | (
                 ClassificationMapping.target_classification_entity_id
-                == entity_id
+                == canonical_entity_id
             )
         )
         .all()
@@ -928,7 +954,7 @@ def get_classification_mappings(
     for mapping in mappings:
         if (
             mapping.source_classification_entity_id
-            == entity_id
+            == canonical_entity_id
         ):
             direction = "outgoing"
             related_entity_id = (
@@ -940,9 +966,14 @@ def get_classification_mappings(
                 mapping.source_classification_entity_id
             )
 
+        canonical_related_entity_id = resolve_canonical_entity_id(
+            db=db,
+            entity_id=related_entity_id,
+        )
+
         related_node = db.get(
             ClassificationNode,
-            related_entity_id,
+            canonical_related_entity_id,
         )
 
         related_scheme = None
@@ -964,7 +995,7 @@ def get_classification_mappings(
                 "source_uri": mapping.source_uri,
                 "review_status": mapping.review_status,
                 "related_classification": {
-                    "entity_id": related_entity_id,
+                    "entity_id": canonical_related_entity_id,
                     "notation": (
                         related_node.notation
                         if related_node
@@ -995,7 +1026,7 @@ def get_classification_mappings(
         )
 
     return {
-        "classification_entity_id": entity_id,
+        "classification_entity_id": canonical_entity_id,
         "mappings": results,
     }
 
@@ -1256,9 +1287,14 @@ def get_work_source_classifications(
     work_entity_id: UUID,
     db: Session = Depends(get_db),
 ):
+    canonical_work_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=work_entity_id,
+    )
+
     work = db.get(
         Work,
-        work_entity_id,
+        canonical_work_entity_id,
     )
 
     if work is None:
@@ -1270,7 +1306,8 @@ def get_work_source_classifications(
     observations = db.scalars(
         select(SourceClassification)
         .where(
-            SourceClassification.work_entity_id == work_entity_id
+            SourceClassification.work_entity_id
+            == canonical_work_entity_id
         )
         .order_by(SourceClassification.observed_at)
     ).all()
