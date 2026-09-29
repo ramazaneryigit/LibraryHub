@@ -110,6 +110,7 @@ def retrieve_work_candidates(
         .limit(WORK_RETRIEVAL_LIMIT)
     ).all()
 
+
 def generate_work_candidates(
     db: Session,
     source_record: SourceRecord,
@@ -127,7 +128,7 @@ def generate_work_candidates(
 
     # PostgreSQL pg_trgm yalnızca güçlü olabilecek küçük bir Work
     # havuzunu getirir. Böylece bütün works tablosu Python'a çekilmez.
-        works = retrieve_work_candidates(
+    works = retrieve_work_candidates(
         db=db,
         source_title=source_title,
     )
@@ -193,10 +194,12 @@ def generate_work_candidates(
         }
 
         evidence["evidence_version"] = "work_fields_v2"
+
         evidence["input_fingerprints"] = capture_inputs(
             source_record,
             canonical_work,
         )
+
         evidence["field_comparisons"] = {
             "language": compare_field(
                 raw_data.get("language"),
