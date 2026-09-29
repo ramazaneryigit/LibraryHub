@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Entity, Expression, Work
+from ..services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(tags=["expressions"])
@@ -24,7 +25,12 @@ def create_expression(
     payload: ExpressionCreate,
     db: Session = Depends(get_db),
 ):
-    work = db.get(Work, payload.work_entity_id)
+    canonical_work_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=payload.work_entity_id,
+    )
+
+    work = db.get(Work, canonical_work_entity_id)
 
     if work is None:
         raise HTTPException(
@@ -63,7 +69,7 @@ def create_expression(
                 )
             """),
             {
-                "work_entity_id": payload.work_entity_id,
+                "work_entity_id": canonical_work_entity_id,
                 "expression_entity_id": entity_id,
             },
         )
@@ -77,7 +83,7 @@ def create_expression(
     return {
         "entity_id": str(entity_id),
         "entity_type": "EXPRESSION",
-        "work_entity_id": str(payload.work_entity_id),
+        "work_entity_id": str(canonical_work_entity_id),
         "language": expression.language,
         "expression_form": expression.expression_form,
     }
