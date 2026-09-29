@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import CollectiveAgent, Entity
 from ..services.work_detail import build_work_detail
+from ..services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(tags=["collective-agents"])
@@ -61,7 +62,12 @@ def get_collective_agent_works(
     entity_id: UUID,
     db: Session = Depends(get_db),
 ):
-    agent = db.get(CollectiveAgent, entity_id)
+    canonical_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=entity_id,
+    )
+
+    agent = db.get(CollectiveAgent, canonical_entity_id)
 
     if agent is None:
         raise HTTPException(
@@ -115,7 +121,7 @@ def get_collective_agent_works(
             """
         ),
         {
-            "entity_id": entity_id,
+            "entity_id": canonical_entity_id,
         },
     ).mappings().all()
 
