@@ -37,15 +37,30 @@ def ingest_source_records(
 
     now = datetime.now(timezone.utc)
 
+    # Geçerli source_record_id değerlerini önceden topla.
+    source_record_ids = [
+        str(record.get("source_record_id"))
+        for record in records
+        if record.get("source_record_id")
+    ]
+
+    # Batch içindeki mevcut kayıtları tek sorguda getir.
+    existing_records = db.scalars(
+        select(SourceRecord).where(
+            SourceRecord.source_system == source_system,
+            SourceRecord.source_record_id.in_(source_record_ids),
+        )
+    ).all()
+
+    existing_by_id = {
+        record.source_record_id: record
+        for record in existing_records
+    }
+
     for index, record in enumerate(records):
         try:
-            source_record_id = record.get(
-                "source_record_id"
-            )
-
-            record_type = record.get(
-                "record_type"
-            )
+            source_record_id = record.get("source_record_id")
+            record_type = record.get("record_type")
 
             if not source_record_id:
                 raise ValueError(
@@ -57,10 +72,9 @@ def ingest_source_records(
                     "record_type is required"
                 )
 
-            raw_data = record.get(
-                "raw_data"
-            )
+            source_record_id = str(source_record_id)
 
+            raw_data = record.get("raw_data")
             if raw_data is None:
                 raw_data = {}
 
@@ -68,27 +82,18 @@ def ingest_source_records(
                 raw_data
             )
 
-            existing = db.scalar(
-                select(SourceRecord).where(
-                    SourceRecord.source_system
-                    == source_system,
-                    SourceRecord.source_record_id
-                    == str(source_record_id),
-                )
+            existing = existing_by_id.get(
+                source_record_id
             )
 
             if existing is None:
                 source_record = SourceRecord(
                     source_system=source_system,
-                    source_record_id=str(
-                        source_record_id
-                    ),
+                    source_record_id=source_record_id,
                     source_uri=record.get(
                         "source_uri"
                     ),
-                    record_type=str(
-                        record_type
-                    ),
+                    record_type=str(record_type),
                     institution_entity_id=record.get(
                         "institution_entity_id"
                     ),
@@ -101,6 +106,12 @@ def ingest_source_records(
                 )
 
                 db.add(source_record)
+
+                # Aynı batch içinde aynı ID tekrar gelirse
+                # ikinci kez INSERT edilmeye çalışılmasını önle.
+                existing_by_id[
+                    source_record_id
+                ] = source_record
 
                 result["created"] += 1
                 continue
@@ -135,42 +146,35 @@ def ingest_source_records(
             existing.source_uri = record.get(
                 "source_uri"
             )
-
             existing.record_type = str(
                 record_type
             )
-
             existing.institution_entity_id = (
                 record.get(
                     "institution_entity_id"
                 )
             )
-
             existing.retrieved_at = now
-
             existing.source_updated_at = (
                 record.get(
                     "source_updated_at"
                 )
             )
-
             existing.raw_data = raw_data
-            existing.content_hash = (
-                content_hash
-            )
+            existing.content_hash = content_hash
 
             result["updated"] += 1
 
         except Exception as exc:
             result["failed"] += 1
-
             result["errors"].append(
                 {
                     "index": index,
-                    "source_record_id":
+                    "source_record_id": (
                         record.get(
                             "source_record_id"
-                        ),
+                        )
+                    ),
                     "error": str(exc),
                 }
             )
