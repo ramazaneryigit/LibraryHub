@@ -18,8 +18,8 @@ is required. Existing endpoints retain their behavior.
 - `automatic_acceptance_eligible` is always false in this uncalibrated policy.
 
 Scores are ranking signals, not probabilities. The preview does not infer that a
-large margin proves identity. Current evidence cannot distinguish every missing
-field from a conflicting field. Stored candidates are not bound to source or
+large margin proves identity. Legacy evidence cannot distinguish every missing
+field from a conflicting field; new generation includes explicit field comparisons. Stored candidates are not bound to source or
 canonical data versions, and generation can update existing candidate evidence
 while retaining older unmatched candidates. Therefore every response explicitly
 reports `candidate_freshness_not_verified`. Versioned evidence, creator/identifier
@@ -48,3 +48,18 @@ Invoke-RestMethod 'http://localhost:8010/reconciliation/source-records/bb673bb2-
 ```
 
 A single candidate must have a null margin and automatic acceptance disabled.
+
+## Field evidence v1 / policy v2
+
+Newly generated candidates use `work_fuzzy_title_v3` with the same scoring weights.
+`evidence.field_comparisons.language` and `.work_type` retain original and normalized
+values and distinguish `match`, `conflict`, `missing_source`, `missing_candidate`,
+`missing_both`, and `invalid_value`. A conflict means normalized values differ under
+the current raw-data contract; it is not proof of different bibliographic identity.
+No language-code aliases or vocabulary mapping are inferred.
+
+Existing boolean match and numeric score fields remain compatible. Existing evidence
+is only upgraded when candidate generation is explicitly run, not on evaluation GET.
+Legacy evidence is reported as unavailable rather than interpreted as a conflict.
+Policy `work_review_v2` reports comparison issues for the top representative candidate;
+all group members retain their own evidence. Freshness remains unverified.

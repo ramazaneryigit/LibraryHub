@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from ..models import ReconciliationCandidate, ReconciliationDecision, SourceRecord, Work
 from .entity_merge import EntityMergeCycleError, resolve_canonical_entity_id
 
-POLICY_VERSION = "work_review_v1"
+POLICY_VERSION = "work_review_v2"
 
 
 def evaluate_work_reconciliation(db: Session, source: SourceRecord) -> dict:
@@ -63,6 +63,19 @@ def evaluate_work_reconciliation(db: Session, source: SourceRecord) -> dict:
         reasons.append("no_second_distinct_candidate")
     elif margin == 0:
         reasons.append("top_score_tie")
+    if top:
+        evidence = top["members"][0]["evidence"]
+        comparisons = evidence.get("field_comparisons") if isinstance(evidence, dict) else None
+        if not isinstance(comparisons, dict):
+            reasons.append("field_comparison_unavailable")
+        else:
+            for field in ("language", "work_type"):
+                comparison = comparisons.get(field)
+                status = comparison.get("status") if isinstance(comparison, dict) else None
+                if status in ("conflict", "missing_source", "missing_candidate", "missing_both", "invalid_value"):
+                    reasons.append(f"top_candidate_{field}_{status}")
+                elif status != "match":
+                    reasons.append(f"top_candidate_{field}_comparison_unavailable")
     if excluded:
         reasons.append("invalid_canonical_candidates")
     if len(candidates) - len(excluded) > len(ranking):

@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base, get_db
 from app.models import Entity, EntityMerge, SourceRecord, Work, ReconciliationCandidate, ReconciliationDecision
 from app.routers.reconciliation import router
-from app.services.reconciliation import generate_work_candidates
+from app.services.reconciliation import compare_field, generate_work_candidates
 
 
 class PolicyTests(unittest.TestCase):
@@ -144,6 +144,52 @@ class PolicyTests(unittest.TestCase):
         result = self.evaluate()
         self.assertEqual(result['top_candidate']['score'], .9667)
         self.assertEqual(result['top_candidate']['members'][0]['evidence']['language_match'], True)
+
+    def test_field_comparison_states(self):
+        for left, right, expected in [
+            (" TR ", "tr", "match"), ("tr", "en", "conflict"),
+            (None, "tr", "missing_source"), ("tr", "  ", "missing_candidate"),
+            ("", None, "missing_both"), ([], "tr", "invalid_value"),
+            ("tr", 5, "invalid_value"), ("!!!", "tr", "missing_source"),
+        ]:
+            with self.subTest(left=left, right=right):
+                result = compare_field(left, right)
+                self.assertEqual(result["status"], expected)
+                self.assertEqual(result["source_value"], left)
+                self.assertEqual(result["candidate_value"], right)
+
+    def test_conflict_missing_and_invalid_have_distinct_evidence(self):
+        candidate = self.candidate(.1)
+        for value, status in [("en", "conflict"), (None, "missing_source"), ([], "invalid_value")]:
+            with self.subTest(status=status):
+                self.source.raw_data = {"title": "Bilgi Yönetimi Giriş", "language": value, "work_type": "textbook"}
+                self.db.commit()
+                generated = generate_work_candidates(self.db, self.source)[0]
+                self.assertAlmostEqual(generated.score, .8167, places=4)
+                self.assertEqual(generated.evidence["field_comparisons"]["language"]["status"], status)
+                self.assertFalse(generated.evidence["language_match"])
+                self.assertIn(f"top_candidate_language_{status}", self.evaluate()["reason_codes"])
+
+    def test_work_type_candidate_missing_and_both_missing(self):
+        candidate = self.candidate(.1)
+        work = self.db.get(Work, candidate.candidate_entity_id)
+        work.work_type = None
+        self.db.commit()
+        generated = generate_work_candidates(self.db, self.source)[0]
+        self.assertEqual(generated.evidence["field_comparisons"]["work_type"]["status"], "missing_candidate")
+        self.source.raw_data = {"title": "Bilgi Yönetimi Giriş", "language": "tr"}
+        self.db.commit()
+        generated = generate_work_candidates(self.db, self.source)[0]
+        self.assertEqual(generated.evidence["field_comparisons"]["work_type"]["status"], "missing_both")
+
+    def test_legacy_false_is_not_inferred_as_conflict(self):
+        candidate = self.candidate(.8)
+        candidate.evidence = {"language_match": False, "work_type_match": False}
+        self.db.commit()
+        result = self.evaluate()
+        self.assertIn("field_comparison_unavailable", result["reason_codes"])
+        self.assertFalse(any("conflict" in code for code in result["reason_codes"]))
+
 
 
 if __name__ == '__main__':
