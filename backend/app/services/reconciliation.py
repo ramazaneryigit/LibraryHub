@@ -1,5 +1,9 @@
+import re
+import unicodedata
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from difflib import SequenceMatcher
 
 from ..models import (
     ReconciliationCandidate,
@@ -13,8 +17,26 @@ def normalize_text(value: str | None) -> str | None:
     if value is None:
         return None
 
+    normalized = unicodedata.normalize(
+        "NFKD",
+        value.casefold(),
+    )
+
+    normalized = "".join(
+        character
+        for character in normalized
+        if not unicodedata.combining(character)
+    )
+
+    normalized = re.sub(
+        r"[^\w\s]",
+        " ",
+        normalized,
+        flags=re.UNICODE,
+    )
+
     normalized = " ".join(
-        value.casefold().strip().split()
+        normalized.split()
     )
 
     return normalized or None
@@ -32,11 +54,9 @@ def generate_work_candidates(
     source_title = normalize_text(
         raw_data.get("title")
     )
-
     source_language = normalize_text(
         raw_data.get("language")
     )
-
     source_work_type = normalize_text(
         raw_data.get("work_type")
     )
@@ -56,7 +76,17 @@ def generate_work_candidates(
             work.canonical_title
         )
 
-        if work_title != source_title:
+        if work_title is None:
+            continue
+
+        title_similarity = SequenceMatcher(
+            None,
+            source_title,
+            work_title,
+        ).ratio()
+
+        # İlk fuzzy sürümde çok zayıf başlıkları aday yapmıyoruz.
+        if title_similarity < 0.70:
             continue
 
         canonical_entity_id = resolve_canonical_entity_id(
@@ -79,11 +109,36 @@ def generate_work_candidates(
         if canonical_work is None:
             continue
 
-        score = 0.70
+        canonical_title = normalize_text(
+            canonical_work.canonical_title
+        )
+
+        if canonical_title is None:
+            continue
+
+        # Redirect sonrasında gerçek canonical Work başlığıyla
+        # benzerliği yeniden hesapla.
+        title_similarity = SequenceMatcher(
+            None,
+            source_title,
+            canonical_title,
+        ).ratio()
+
+        if title_similarity < 0.70:
+            continue
+
+        title_score = title_similarity * 0.70
+        score = title_score
 
         evidence = {
-            "title_match": True,
-            "title_score": 0.70,
+            "title_similarity": round(
+                title_similarity,
+                4,
+            ),
+            "title_score": round(
+                title_score,
+                4,
+            ),
             "language_match": False,
             "language_score": 0.0,
             "work_type_match": False,
@@ -116,6 +171,11 @@ def generate_work_candidates(
             evidence["work_type_match"] = True
             evidence["work_type_score"] = 0.15
 
+        score = round(
+            min(score, 1.0),
+            4,
+        )
+
         existing_candidate = db.scalar(
             select(ReconciliationCandidate).where(
                 ReconciliationCandidate.source_record_id
@@ -128,29 +188,25 @@ def generate_work_candidates(
         if existing_candidate is not None:
             existing_candidate.score = score
             existing_candidate.method = (
-                "work_exact_title_v1"
+                "work_fuzzy_title_v2"
             )
             existing_candidate.evidence = evidence
 
             generated_candidates.append(
                 existing_candidate
             )
-
             continue
 
         candidate = ReconciliationCandidate(
             source_record_id=source_record.id,
             candidate_entity_id=canonical_entity_id,
             score=score,
-            method="work_exact_title_v1",
+            method="work_fuzzy_title_v2",
             evidence=evidence,
         )
 
         db.add(candidate)
-
-        generated_candidates.append(
-            candidate
-        )
+        generated_candidates.append(candidate)
 
     db.commit()
 
