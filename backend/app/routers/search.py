@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Concept
 from ..services.work_detail import build_work_detail
+from ..services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(tags=["search"])
@@ -17,7 +18,15 @@ def search_by_concept(
     concept_entity_id: UUID,
     db: Session = Depends(get_db),
 ):
-    concept = db.get(Concept, concept_entity_id)
+    canonical_concept_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=concept_entity_id,
+    )
+
+    concept = db.get(
+        Concept,
+        canonical_concept_entity_id,
+    )
 
     if concept is None:
         raise HTTPException(
@@ -65,10 +74,14 @@ def search_by_concept(
 
     rows = db.execute(
         text(query),
-        {"concept_id": str(concept_entity_id)},
+        {
+            "concept_id": str(canonical_concept_entity_id),
+        },
     ).mappings().all()
 
     results = []
+
+    seen_work_ids = set()
 
     for row in rows:
         work_detail = build_work_detail(
@@ -76,9 +89,19 @@ def search_by_concept(
             db=db,
         )
 
+        if work_detail is None:
+            continue
+
+        canonical_work_entity_id = work_detail["entity_id"]
+
+        if canonical_work_entity_id in seen_work_ids:
+            continue
+
+        seen_work_ids.add(canonical_work_entity_id)
+
         results.append({
-            "work_entity_id": str(row["entity_id"]),
-            "canonical_title": row["canonical_title"],
+            "work_entity_id": canonical_work_entity_id,
+            "canonical_title": work_detail["canonical_title"],
             "matched_concept": row["matched_concept"],
             "level": row["level"],
             "authors": work_detail["authors"],
@@ -87,12 +110,11 @@ def search_by_concept(
 
     return {
         "concept": {
-            "entity_id": str(concept.entity_id),
+            "entity_id": str(canonical_concept_entity_id),
             "preferred_label": concept.preferred_label,
         },
         "results": results,
     }
-
 
 @router.get("/search")
 def search(
@@ -220,6 +242,7 @@ def search(
     ).mappings().all()
 
     results = []
+    seen_work_ids = set()
 
     for row in rows:
         work_detail = build_work_detail(
@@ -227,8 +250,16 @@ def search(
             db=db,
         )
 
-        if work_detail is not None:
-            results.append(work_detail)
+        if work_detail is None:
+            continue
+
+        canonical_work_entity_id = work_detail["entity_id"]
+
+        if canonical_work_entity_id in seen_work_ids:
+            continue
+
+        seen_work_ids.add(canonical_work_entity_id)
+        results.append(work_detail)
 
     return {
         "query": q,
