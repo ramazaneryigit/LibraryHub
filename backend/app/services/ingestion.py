@@ -1,3 +1,4 @@
+from uuid import UUID
 import hashlib
 import json
 from datetime import datetime, timezone
@@ -7,6 +8,49 @@ from sqlalchemy.orm import Session
 
 from ..models import SourceRecord
 
+
+def normalize_institution_entity_id(
+    value,
+):
+    if value is None or value == "":
+        return None
+
+    try:
+        return UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError(
+            "institution_entity_id must be a valid UUID"
+        )
+
+
+def normalize_source_updated_at(
+    value,
+):
+    if value is None or value == "":
+        return None
+
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(
+                value.replace("Z", "+00:00")
+            )
+        except ValueError:
+            raise ValueError(
+                "source_updated_at must be a valid ISO 8601 datetime"
+            )
+    else:
+        raise ValueError(
+            "source_updated_at must be a valid ISO 8601 datetime"
+        )
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(
+            tzinfo=timezone.utc
+        )
+
+    return parsed
 
 def calculate_content_hash(raw_data) -> str:
     serialized = json.dumps(
@@ -95,6 +139,22 @@ def ingest_source_records(
                     "raw_data must be a JSON object"
                 )
 
+            institution_entity_id = (
+                normalize_institution_entity_id(
+                    record.get(
+                        "institution_entity_id"
+                    )
+                )
+            )
+
+            source_updated_at = (
+                normalize_source_updated_at(
+                    record.get(
+                        "source_updated_at"
+                    )
+                )
+            )
+
             content_hash = calculate_content_hash(
                 raw_data
             )
@@ -119,15 +179,11 @@ def ingest_source_records(
                             record_type
                         ),
                         institution_entity_id=(
-                            record.get(
-                                "institution_entity_id"
-                            )
+                            institution_entity_id
                         ),
                         retrieved_at=now,
                         source_updated_at=(
-                            record.get(
-                                "source_updated_at"
-                            )
+                            source_updated_at
                         ),
                         raw_data=raw_data,
                         content_hash=content_hash,
@@ -155,9 +211,7 @@ def ingest_source_records(
                         existing.institution_entity_id
                     )
                     != str(
-                        record.get(
-                            "institution_entity_id"
-                        )
+                        institution_entity_id
                     )
                 )
 
@@ -176,21 +230,23 @@ def ingest_source_records(
                 existing.source_uri = record.get(
                     "source_uri"
                 )
+
                 existing.record_type = str(
                     record_type
                 )
+
                 existing.institution_entity_id = (
-                    record.get(
-                        "institution_entity_id"
-                    )
+                    institution_entity_id
                 )
+
                 existing.retrieved_at = now
+
                 existing.source_updated_at = (
-                    record.get(
-                        "source_updated_at"
-                    )
+                    source_updated_at
                 )
+
                 existing.raw_data = raw_data
+
                 existing.content_hash = (
                     content_hash
                 )
