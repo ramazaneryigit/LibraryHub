@@ -12,6 +12,7 @@ from ..models import (
     CollectiveAgent,
     WorkAgentRelation,
 )
+from ..services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(
@@ -31,7 +32,17 @@ def add_work_agent(
     payload: AgentRelationCreate,
     db: Session = Depends(get_db),
 ):
-    work = db.get(Work, work_entity_id)
+    canonical_work_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=work_entity_id,
+    )
+
+    canonical_agent_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=payload.agent_entity_id,
+    )
+
+    work = db.get(Work, canonical_work_entity_id)
 
     if work is None:
         raise HTTPException(
@@ -39,7 +50,7 @@ def add_work_agent(
             detail="Work not found",
         )
 
-    agent = db.get(Entity, payload.agent_entity_id)
+    agent = db.get(Entity, canonical_agent_entity_id)
 
     if agent is None:
         raise HTTPException(
@@ -56,8 +67,8 @@ def add_work_agent(
     existing = (
         db.query(WorkAgentRelation)
         .filter(
-            WorkAgentRelation.work_entity_id == work_entity_id,
-            WorkAgentRelation.agent_entity_id == payload.agent_entity_id,
+            WorkAgentRelation.work_entity_id == canonical_work_entity_id,
+            WorkAgentRelation.agent_entity_id == canonical_agent_entity_id,
             WorkAgentRelation.role == payload.role,
         )
         .first()
@@ -70,8 +81,8 @@ def add_work_agent(
         )
 
     relation = WorkAgentRelation(
-        work_entity_id=work_entity_id,
-        agent_entity_id=payload.agent_entity_id,
+        work_entity_id=canonical_work_entity_id,
+        agent_entity_id=canonical_agent_entity_id,
         role=payload.role,
     )
 
@@ -79,8 +90,8 @@ def add_work_agent(
     db.commit()
 
     return {
-        "work_entity_id": str(work_entity_id),
-        "agent_entity_id": str(payload.agent_entity_id),
+        "work_entity_id": str(canonical_work_entity_id),
+        "agent_entity_id": str(canonical_agent_entity_id),
         "role": payload.role,
     }
 
@@ -90,7 +101,12 @@ def get_work_agents(
     work_entity_id: UUID,
     db: Session = Depends(get_db),
 ):
-    work = db.get(Work, work_entity_id)
+    canonical_work_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=work_entity_id,
+    )
+
+    work = db.get(Work, canonical_work_entity_id)
 
     if work is None:
         raise HTTPException(
@@ -101,7 +117,7 @@ def get_work_agents(
     relations = (
         db.query(WorkAgentRelation)
         .filter(
-            WorkAgentRelation.work_entity_id == work_entity_id
+            WorkAgentRelation.work_entity_id == canonical_work_entity_id
         )
         .all()
     )
@@ -109,9 +125,14 @@ def get_work_agents(
     agents = []
 
     for relation in relations:
+        canonical_agent_entity_id = resolve_canonical_entity_id(
+            db=db,
+            entity_id=relation.agent_entity_id,
+        )
+
         entity = db.get(
             Entity,
-            relation.agent_entity_id,
+            canonical_agent_entity_id,
         )
 
         if entity is None:
@@ -122,7 +143,7 @@ def get_work_agents(
         if entity.entity_type == "PERSON":
             person = db.get(
                 Person,
-                relation.agent_entity_id,
+                canonical_agent_entity_id,
             )
 
             if person is not None:
@@ -131,7 +152,7 @@ def get_work_agents(
         elif entity.entity_type == "ORGANIZATION":
             organization = db.get(
                 CollectiveAgent,
-                relation.agent_entity_id,
+                canonical_agent_entity_id,
             )
 
             if organization is not None:
@@ -140,7 +161,7 @@ def get_work_agents(
         agents.append(
             {
                 "agent_entity_id": str(
-                    relation.agent_entity_id
+                    canonical_agent_entity_id
                 ),
                 "entity_type": entity.entity_type,
                 "canonical_name": canonical_name,
@@ -149,6 +170,6 @@ def get_work_agents(
         )
 
     return {
-        "work_entity_id": str(work_entity_id),
+        "work_entity_id": str(canonical_work_entity_id),
         "agents": agents,
     }
