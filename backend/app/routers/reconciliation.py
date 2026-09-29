@@ -12,8 +12,10 @@ from ..models import (
     ReconciliationCandidate,
     ReconciliationDecision,
     SourceRecord,
+    Work,
 )
-from ..services.entity_merge import resolve_canonical_entity_id
+from ..services.entity_merge import EntityMergeCycleError, resolve_canonical_entity_id
+from ..services.reconciliation_freshness import check_freshness
 from ..services.reconciliation import generate_work_candidates
 from ..services.reconciliation_policy import evaluate_work_reconciliation
 
@@ -231,6 +233,38 @@ def create_reconciliation_decision(
             status_code=400,
             detail="New entity decision must not have a candidate",
         )
+
+    if payload.status == "accepted":
+        if payload.origin == "automatic":
+            raise HTTPException(status_code=409, detail={
+                "code": "automatic_acceptance_not_calibrated",
+                "message": "Automatic acceptance is disabled; manual review is required",
+            })
+        if source_record.record_type != "work":
+            raise HTTPException(status_code=400, detail={
+                "code": "acceptance_record_type_unsupported",
+                "message": "Acceptance validation currently supports only work records",
+            })
+        try:
+            canonical_id = resolve_canonical_entity_id(db, candidate.candidate_entity_id)
+        except EntityMergeCycleError:
+            raise HTTPException(status_code=409, detail={
+                "code": "canonical_cycle",
+                "message": "Canonical identity must be repaired before acceptance",
+            })
+        work = db.get(Work, canonical_id)
+        if work is None:
+            raise HTTPException(status_code=409, detail={
+                "code": "canonical_work_missing",
+                "message": "Candidate must resolve to an existing Work",
+            })
+        freshness = check_freshness(source_record, work, candidate)
+        if freshness["status"] != "fresh":
+            raise HTTPException(status_code=409, detail={
+                "code": "candidate_evidence_requires_regeneration",
+                "message": "Regenerate candidate evidence and review it before acceptance",
+                "freshness": freshness,
+            })
 
     decision = ReconciliationDecision(
         source_record_id=source_record_id,

@@ -4,7 +4,7 @@ GET `/reconciliation/source-records/{source_record_id}/evaluation`
 
 This read-only Work endpoint evaluates stored candidates. It does not regenerate
 candidates, merge entities, create entities, or save/replace decisions. No migration
-is required. Existing endpoints retain their behavior.
+is required. The decision POST now enforces acceptance checks described below.
 
 - Historical candidate IDs and evidence remain visible under each group's `members`.
 - Candidates resolving to the same canonical Work form one ranked group.
@@ -24,8 +24,8 @@ canonical data versions, and generation can update existing candidate evidence
 while retaining older unmatched candidates. Policy v3 checks stored-candidate input freshness as described below. Immutable
 evidence history, creator/identifier signals and a labeled pilot dataset remain
 prerequisites for automatic acceptance.
-The existing decision POST can still accept caller-supplied automatic decisions;
-this preview is not an authorization or enforcement gate for that endpoint.
+The decision POST now blocks automatic acceptance and validates input freshness
+for manual Work acceptance. These checks are not user authentication or authorization.
 
 ## Local verification
 
@@ -97,3 +97,24 @@ against concurrent changes, or a guarantee that retrieval covers newly added
 Works. It does not cover creator/identifier data not yet used by this scorer.
 Generation still replaces evidence on existing candidates; immutable decision and
 candidate history remains a separate future task.
+
+
+## Acceptance guard
+
+POST `/reconciliation/source-records/{source_record_id}/decision` now enforces:
+
+- `accepted` + `automatic`: HTTP 409, `automatic_acceptance_not_calibrated`.
+- Manual Work acceptance requires a resolvable canonical Work and fresh evidence.
+- Stale/unknown evidence: HTTP 409, `candidate_evidence_requires_regeneration`,
+  with freshness details. Regenerate evidence and review before submitting again.
+- Cycles/missing canonical Works: HTTP 409 with a specific integrity reason.
+- Accepted decisions for other record types: HTTP 400 until their validation exists.
+- Existing decisions still return HTTP 409; foreign candidates still return 400.
+- Rejected, unresolved and new_entity decision validation is unchanged.
+
+A manual reviewer may accept fresh evidence containing a field conflict. This is a
+human judgment, not an automatic score threshold. No real records are accepted by
+installation; no migration is needed. Tests exercise writes only in isolated SQLite.
+The guard checks current values before insertion; it is not a concurrency lock,
+immutable evidence snapshot, or authenticated reviewer identity. Decision history
+and concurrency-safe evidence persistence remain future work.

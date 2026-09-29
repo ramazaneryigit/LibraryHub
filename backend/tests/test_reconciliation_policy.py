@@ -271,6 +271,83 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(result["stored_candidate_inputs_current"])
 
 
+    def decide(self, candidate, status="accepted", origin="manual"):
+        return self.client.post(f'/reconciliation/source-records/{self.source.id}/decision',
+                                json={"candidate_id": str(candidate.id) if candidate else None,
+                                      "status": status, "origin": origin})
+
+    def assert_no_decision(self):
+        self.assertIsNone(self.db.scalar(select(ReconciliationDecision).where(
+            ReconciliationDecision.source_record_id == self.source.id)))
+
+    def test_fresh_manual_acceptance_and_duplicate_preservation(self):
+        candidate = self.fresh_candidate()
+        response = self.decide(candidate)
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["status"], "accepted")
+        self.assertIsNotNone(response.json()["reviewed_at"])
+        self.assertEqual(self.decide(candidate).status_code, 409)
+        self.assertEqual(self.evaluate()["current_decision"]["id"], response.json()["id"])
+
+    def test_stale_acceptance_blocked_then_regeneration_allows_review(self):
+        candidate = self.fresh_candidate()
+        self.source.raw_data = {**self.source.raw_data, "language": "en"}
+        self.db.commit()
+        response = self.decide(candidate)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["freshness"]["status"], "stale")
+        self.assert_no_decision()
+        generate_work_candidates(self.db, self.source)
+        # A conflict is review evidence, not a categorical ban on human judgment.
+        self.assertEqual(self.decide(candidate).status_code, 201)
+
+    def test_unknown_evidence_cannot_be_accepted(self):
+        response = self.decide(self.candidate(.99))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["freshness"]["status"], "unknown")
+        self.assert_no_decision()
+
+    def test_automatic_acceptance_blocked_even_when_fresh(self):
+        response = self.decide(self.fresh_candidate(), origin="automatic")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["code"], "automatic_acceptance_not_calibrated")
+        self.assert_no_decision()
+
+    def test_rejection_with_legacy_evidence_still_allowed(self):
+        self.assertEqual(self.decide(self.candidate(.7), status="rejected").status_code, 201)
+
+    def test_acceptance_canonical_cycle_and_missing_work(self):
+        a = self.fresh_candidate()
+        b = self.candidate(.7)
+        self.db.add_all([
+            EntityMerge(source_entity_id=a.candidate_entity_id, target_entity_id=b.candidate_entity_id),
+            EntityMerge(source_entity_id=b.candidate_entity_id, target_entity_id=a.candidate_entity_id),
+        ])
+        self.db.commit()
+        response = self.decide(a)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["code"], "canonical_cycle")
+        self.assert_no_decision()
+        c = self.candidate(.5)
+        self.db.delete(self.db.get(Work, c.candidate_entity_id))
+        self.db.commit()
+        self.assertEqual(self.decide(c).json()["detail"]["code"], "canonical_work_missing")
+        self.assert_no_decision()
+
+    def test_acceptance_rejects_wrong_record_type_and_foreign_candidate(self):
+        candidate = self.fresh_candidate()
+        self.source.record_type = "person"
+        self.db.commit()
+        self.assertEqual(self.decide(candidate).status_code, 400)
+        self.assert_no_decision()
+        other = SourceRecord(source_system="test", source_record_id="other", record_type="work", raw_data={})
+        self.db.add(other)
+        self.db.commit()
+        response = self.client.post(f'/reconciliation/source-records/{other.id}/decision',
+                                    json={"candidate_id": str(candidate.id), "status": "accepted"})
+        self.assertEqual(response.status_code, 400)
+
+
 
 if __name__ == '__main__':
     unittest.main()
