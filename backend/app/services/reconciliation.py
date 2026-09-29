@@ -1,7 +1,7 @@
 import re
 import unicodedata
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from difflib import SequenceMatcher
 
@@ -94,37 +94,39 @@ def generate_work_candidates(
     if not isinstance(raw_data, dict):
         return []
 
-    source_title = normalize_text(
-        raw_data.get("title")
-    )
+    raw_source_title = raw_data.get("title")
+    source_title = normalize_text(raw_source_title)
+
     if source_title is None:
         return []
 
+    # PostgreSQL pg_trgm yalnızca güçlü olabilecek küçük bir Work
+    # havuzunu getirir. Böylece bütün works tablosu Python'a çekilmez.
+    candidate_pool_limit = 100
+
     works = db.scalars(
         select(Work)
+        .where(
+            Work.canonical_title.is_not(None),
+            func.similarity(
+                func.lower(Work.canonical_title),
+                source_title,
+            ) >= 0.30,
+        )
+        .order_by(
+            func.similarity(
+                func.lower(Work.canonical_title),
+                source_title,
+            ).desc(),
+            Work.entity_id,
+        )
+        .limit(candidate_pool_limit)
     ).all()
 
     generated_candidates = []
     seen_canonical_entity_ids = set()
 
     for work in works:
-        work_title = normalize_text(
-            work.canonical_title
-        )
-
-        if work_title is None:
-            continue
-
-        title_similarity = SequenceMatcher(
-            None,
-            source_title,
-            work_title,
-        ).ratio()
-
-        # İlk fuzzy sürümde çok zayıf başlıkları aday yapmıyoruz.
-        if title_similarity < 0.70:
-            continue
-
         canonical_entity_id = resolve_canonical_entity_id(
             db=db,
             entity_id=work.entity_id,
@@ -152,8 +154,8 @@ def generate_work_candidates(
         if canonical_title is None:
             continue
 
-        # Redirect sonrasında gerçek canonical Work başlığıyla
-        # benzerliği yeniden hesapla.
+        # pg_trgm yalnızca retrieval katmanıdır.
+        # Nihai başlık skoru mevcut Python algoritmasıyla hesaplanır.
         title_similarity = SequenceMatcher(
             None,
             source_title,
@@ -182,12 +184,24 @@ def generate_work_candidates(
         }
 
         evidence["evidence_version"] = "work_fields_v2"
-        evidence["input_fingerprints"] = capture_inputs(source_record, canonical_work)
+        evidence["input_fingerprints"] = capture_inputs(
+            source_record,
+            canonical_work,
+        )
         evidence["field_comparisons"] = {
-            "language": compare_field(raw_data.get("language"), canonical_work.original_language),
-            "work_type": compare_field(raw_data.get("work_type"), canonical_work.work_type),
+            "language": compare_field(
+                raw_data.get("language"),
+                canonical_work.original_language,
+            ),
+            "work_type": compare_field(
+                raw_data.get("work_type"),
+                canonical_work.work_type,
+            ),
         }
-        for field, comparison in evidence["field_comparisons"].items():
+
+        for field, comparison in evidence[
+            "field_comparisons"
+        ].items():
             if comparison["status"] == "match":
                 score += 0.15
                 evidence[f"{field}_match"] = True
@@ -209,9 +223,7 @@ def generate_work_candidates(
 
         if existing_candidate is not None:
             existing_candidate.score = score
-            existing_candidate.method = (
-                METHOD
-            )
+            existing_candidate.method = METHOD
             existing_candidate.evidence = evidence
 
             generated_candidates.append(
