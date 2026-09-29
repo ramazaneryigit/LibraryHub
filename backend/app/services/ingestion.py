@@ -48,7 +48,9 @@ def ingest_source_records(
     existing_records = db.scalars(
         select(SourceRecord).where(
             SourceRecord.source_system == source_system,
-            SourceRecord.source_record_id.in_(source_record_ids),
+            SourceRecord.source_record_id.in_(
+                source_record_ids
+            ),
         )
     ).all()
 
@@ -58,9 +60,14 @@ def ingest_source_records(
     }
 
     for index, record in enumerate(records):
+        source_record_id = record.get(
+            "source_record_id"
+        )
+
         try:
-            source_record_id = record.get("source_record_id")
-            record_type = record.get("record_type")
+            record_type = record.get(
+                "record_type"
+            )
 
             if not source_record_id:
                 raise ValueError(
@@ -72,11 +79,21 @@ def ingest_source_records(
                     "record_type is required"
                 )
 
-            source_record_id = str(source_record_id)
+            source_record_id = str(
+                source_record_id
+            )
 
-            raw_data = record.get("raw_data")
+            raw_data = record.get(
+                "raw_data"
+            )
+
             if raw_data is None:
                 raw_data = {}
+
+            if not isinstance(raw_data, dict):
+                raise ValueError(
+                    "raw_data must be a JSON object"
+                )
 
             content_hash = calculate_content_hash(
                 raw_data
@@ -86,94 +103,112 @@ def ingest_source_records(
                 source_record_id
             )
 
-            if existing is None:
-                source_record = SourceRecord(
-                    source_system=source_system,
-                    source_record_id=source_record_id,
-                    source_uri=record.get(
-                        "source_uri"
-                    ),
-                    record_type=str(record_type),
-                    institution_entity_id=record.get(
-                        "institution_entity_id"
-                    ),
-                    retrieved_at=now,
-                    source_updated_at=record.get(
-                        "source_updated_at"
-                    ),
-                    raw_data=raw_data,
-                    content_hash=content_hash,
+            # Her kayıt kendi SAVEPOINT'i içinde işlenir.
+            # Bir kaydın DB hatası diğer kayıtları bozmaz.
+            with db.begin_nested():
+                if existing is None:
+                    source_record = SourceRecord(
+                        source_system=source_system,
+                        source_record_id=(
+                            source_record_id
+                        ),
+                        source_uri=record.get(
+                            "source_uri"
+                        ),
+                        record_type=str(
+                            record_type
+                        ),
+                        institution_entity_id=(
+                            record.get(
+                                "institution_entity_id"
+                            )
+                        ),
+                        retrieved_at=now,
+                        source_updated_at=(
+                            record.get(
+                                "source_updated_at"
+                            )
+                        ),
+                        raw_data=raw_data,
+                        content_hash=content_hash,
+                    )
+
+                    db.add(source_record)
+
+                    # DB constraint/type hatalarının
+                    # SAVEPOINT içindeyken oluşmasını sağlar.
+                    db.flush()
+
+                    existing_by_id[
+                        source_record_id
+                    ] = source_record
+
+                    result["created"] += 1
+                    continue
+
+                metadata_changed = (
+                    existing.source_uri
+                    != record.get("source_uri")
+                    or existing.record_type
+                    != str(record_type)
+                    or str(
+                        existing.institution_entity_id
+                    )
+                    != str(
+                        record.get(
+                            "institution_entity_id"
+                        )
+                    )
                 )
 
-                db.add(source_record)
-
-                # Aynı batch içinde aynı ID tekrar gelirse
-                # ikinci kez INSERT edilmeye çalışılmasını önle.
-                existing_by_id[
-                    source_record_id
-                ] = source_record
-
-                result["created"] += 1
-                continue
-
-            metadata_changed = (
-                existing.source_uri
-                != record.get("source_uri")
-                or existing.record_type
-                != str(record_type)
-                or str(
-                    existing.institution_entity_id
+                content_changed = (
+                    existing.content_hash
+                    != content_hash
                 )
-                != str(
+
+                if (
+                    not metadata_changed
+                    and not content_changed
+                ):
+                    result["unchanged"] += 1
+                    continue
+
+                existing.source_uri = record.get(
+                    "source_uri"
+                )
+                existing.record_type = str(
+                    record_type
+                )
+                existing.institution_entity_id = (
                     record.get(
                         "institution_entity_id"
                     )
                 )
-            )
-
-            content_changed = (
-                existing.content_hash
-                != content_hash
-            )
-
-            if (
-                not metadata_changed
-                and not content_changed
-            ):
-                result["unchanged"] += 1
-                continue
-
-            existing.source_uri = record.get(
-                "source_uri"
-            )
-            existing.record_type = str(
-                record_type
-            )
-            existing.institution_entity_id = (
-                record.get(
-                    "institution_entity_id"
+                existing.retrieved_at = now
+                existing.source_updated_at = (
+                    record.get(
+                        "source_updated_at"
+                    )
                 )
-            )
-            existing.retrieved_at = now
-            existing.source_updated_at = (
-                record.get(
-                    "source_updated_at"
+                existing.raw_data = raw_data
+                existing.content_hash = (
+                    content_hash
                 )
-            )
-            existing.raw_data = raw_data
-            existing.content_hash = content_hash
 
-            result["updated"] += 1
+                # UPDATE kaynaklı DB hatasını da
+                # SAVEPOINT içinde yakala.
+                db.flush()
+
+                result["updated"] += 1
 
         except Exception as exc:
             result["failed"] += 1
+
             result["errors"].append(
                 {
                     "index": index,
                     "source_record_id": (
-                        record.get(
-                            "source_record_id"
-                        )
+                        source_record_id
                     ),
                     "error": str(exc),
                 }
