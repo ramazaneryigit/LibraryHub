@@ -222,6 +222,50 @@ def retrieve_work_candidates_by_identifier(
     return list(
         db.scalars(statement).all()
     )
+    
+def build_identifier_evidence(
+    db: Session,
+    raw_data: dict,
+    work_entity_id,
+) -> dict:
+    source_identifiers = normalize_source_identifiers(
+        raw_data
+    )
+
+    target_work_entity_id = str(work_entity_id)
+    matched_identifiers = []
+
+    for source_identifier in source_identifiers:
+        identifier_works = retrieve_work_candidates_by_identifier(
+            db=db,
+            raw_data={
+                "identifiers": [
+                    source_identifier
+                ]
+            },
+        )
+
+        matched_work_ids = {
+            str(work.entity_id)
+            for work in identifier_works
+        }
+
+        if target_work_entity_id not in matched_work_ids:
+            continue
+
+        matched_identifiers.append(
+            {
+                "scheme": source_identifier["scheme"],
+                "value": source_identifier["value"],
+                "work_count": len(matched_work_ids),
+                "unique": len(matched_work_ids) == 1,
+            }
+        )
+
+    return {
+        "match": bool(matched_identifiers),
+        "matches": matched_identifiers,
+    }
 
 def retrieve_work_candidates(
     db: Session,
@@ -346,6 +390,13 @@ def generate_work_candidates(
         title_score = title_similarity * 0.70
         score = title_score
 
+        # Identifier eşleşmesinin ayrıntılı evidence bilgisini üret.
+        identifier_evidence = build_identifier_evidence(
+            db=db,
+            raw_data=raw_data,
+            work_entity_id=work.entity_id,
+        )
+
         evidence = {
             "title_similarity": round(
                 title_similarity,
@@ -355,8 +406,9 @@ def generate_work_candidates(
                 title_score,
                 4,
             ),
-            "identifier_match": identifier_match,
+            "identifier_match": identifier_evidence["match"],
             "identifier_score": 0.0,
+            "identifier_evidence": identifier_evidence,
             "language_match": False,
             "language_score": 0.0,
             "work_type_match": False,
