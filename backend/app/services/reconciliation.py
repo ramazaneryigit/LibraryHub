@@ -84,6 +84,31 @@ def compare_field(source_value, candidate_value) -> dict:
         "candidate_state": candidate_state,
     }
 
+WORK_RETRIEVAL_LIMIT = 100
+WORK_TRIGRAM_THRESHOLD = 0.30
+
+
+def retrieve_work_candidates(
+    db: Session,
+    source_title: str,
+) -> list[Work]:
+    similarity = func.similarity(
+        func.lower(Work.canonical_title),
+        source_title,
+    )
+
+    return db.scalars(
+        select(Work)
+        .where(
+            Work.canonical_title.is_not(None),
+            similarity >= WORK_TRIGRAM_THRESHOLD,
+        )
+        .order_by(
+            similarity.desc(),
+            Work.entity_id,
+        )
+        .limit(WORK_RETRIEVAL_LIMIT)
+    ).all()
 
 def generate_work_candidates(
     db: Session,
@@ -102,26 +127,10 @@ def generate_work_candidates(
 
     # PostgreSQL pg_trgm yalnızca güçlü olabilecek küçük bir Work
     # havuzunu getirir. Böylece bütün works tablosu Python'a çekilmez.
-    candidate_pool_limit = 100
-
-    works = db.scalars(
-        select(Work)
-        .where(
-            Work.canonical_title.is_not(None),
-            func.similarity(
-                func.lower(Work.canonical_title),
-                source_title,
-            ) >= 0.30,
-        )
-        .order_by(
-            func.similarity(
-                func.lower(Work.canonical_title),
-                source_title,
-            ).desc(),
-            Work.entity_id,
-        )
-        .limit(candidate_pool_limit)
-    ).all()
+        works = retrieve_work_candidates(
+        db=db,
+        source_title=source_title,
+    )
 
     generated_candidates = []
     seen_canonical_entity_ids = set()
