@@ -6,9 +6,12 @@ from sqlalchemy.orm import Session
 from difflib import SequenceMatcher
 
 from ..models import (
+    ExpressionManifestation,
+    Identifier,
     ReconciliationCandidate,
     SourceRecord,
     Work,
+    WorkExpression,
 )
 from .entity_merge import resolve_canonical_entity_id
 from .reconciliation_freshness import METHOD, capture_inputs
@@ -87,6 +90,138 @@ def compare_field(source_value, candidate_value) -> dict:
 WORK_RETRIEVAL_LIMIT = 100
 WORK_TRIGRAM_THRESHOLD = 0.30
 
+def normalize_source_identifiers(
+    raw_data: dict,
+) -> list[dict[str, str]]:
+    raw_identifiers = raw_data.get("identifiers")
+
+    if not isinstance(raw_identifiers, list):
+        return []
+
+    normalized_identifiers = []
+
+    for identifier in raw_identifiers:
+        if not isinstance(identifier, dict):
+            continue
+
+        scheme = identifier.get("scheme")
+        value = identifier.get("value")
+
+        if not isinstance(scheme, str):
+            continue
+
+        if not isinstance(value, str):
+            continue
+
+        scheme = scheme.strip().lower()
+        value = value.strip()
+
+        if not scheme or not value:
+            continue
+
+        if scheme in {"isbn", "issn"}:
+            value = (
+                value.replace("-", "")
+                .replace(" ", "")
+                .upper()
+            )
+
+        elif scheme == "doi":
+            value = value.lower()
+
+            if value.startswith("https://doi.org/"):
+                value = value[len("https://doi.org/"):]
+
+            elif value.startswith("http://doi.org/"):
+                value = value[len("http://doi.org/"):]
+
+            elif value.startswith("doi:"):
+                value = value[4:]
+
+            value = value.strip()
+
+        normalized_identifiers.append(
+            {
+                "scheme": scheme,
+                "value": value,
+            }
+        )
+
+    return normalized_identifiers
+
+def retrieve_work_candidates_by_identifier(
+    db: Session,
+    raw_data: dict,
+) -> list[Work]:
+    source_identifiers = normalize_source_identifiers(
+        raw_data
+    )
+
+    if not source_identifiers:
+        return []
+
+    manifestation_identifiers = [
+        identifier
+        for identifier in source_identifiers
+        if identifier["scheme"] in {"isbn", "issn"}
+    ]
+
+    if not manifestation_identifiers:
+        return []
+
+    conditions = []
+
+    for identifier in manifestation_identifiers:
+        conditions.append(
+            (
+                func.lower(Identifier.scheme)
+                == identifier["scheme"]
+            )
+            & (
+                func.replace(
+                    func.replace(
+                        Identifier.value,
+                        "-",
+                        "",
+                    ),
+                    " ",
+                    "",
+                )
+                == identifier["value"]
+            )
+        )
+
+    if not conditions:
+        return []
+
+    from sqlalchemy import or_
+
+    statement = (
+        select(Work)
+        .join(
+            WorkExpression,
+            WorkExpression.work_entity_id
+            == Work.entity_id,
+        )
+        .join(
+            ExpressionManifestation,
+            ExpressionManifestation.expression_entity_id
+            == WorkExpression.expression_entity_id,
+        )
+        .join(
+            Identifier,
+            Identifier.entity_id
+            == ExpressionManifestation.manifestation_entity_id,
+        )
+        .where(
+            or_(*conditions)
+        )
+        .distinct()
+    )
+
+    return list(
+        db.scalars(statement).all()
+    )
 
 def retrieve_work_candidates(
     db: Session,
@@ -128,15 +263,43 @@ def generate_work_candidates(
 
     # PostgreSQL pg_trgm yalnızca güçlü olabilecek küçük bir Work
     # havuzunu getirir. Böylece bütün works tablosu Python'a çekilmez.
-    works = retrieve_work_candidates(
+    title_candidates = retrieve_work_candidates(
         db=db,
         source_title=source_title,
     )
+
+    # ISBN / ISSN gibi identifier değerlerinden bulunan Work adayları.
+    identifier_candidates = retrieve_work_candidates_by_identifier(
+        db=db,
+        raw_data=raw_data,
+    )
+
+    # Hangi Work'lerin identifier üzerinden bulunduğunu sakla.
+    identifier_candidate_ids = {
+        work.entity_id
+        for work in identifier_candidates
+    }
+
+    # Başlık ve identifier retrieval sonuçlarını entity_id üzerinden
+    # tek aday havuzunda birleştir.
+    works_by_entity_id = {
+        work.entity_id: work
+        for work in title_candidates
+    }
+
+    for work in identifier_candidates:
+        works_by_entity_id[work.entity_id] = work
+
+    works = list(works_by_entity_id.values())
 
     generated_candidates = []
     seen_canonical_entity_ids = set()
 
     for work in works:
+        identifier_match = (
+            work.entity_id in identifier_candidate_ids
+        )
+
         canonical_entity_id = resolve_canonical_entity_id(
             db=db,
             entity_id=work.entity_id,
@@ -164,7 +327,7 @@ def generate_work_candidates(
         if canonical_title is None:
             continue
 
-        # pg_trgm yalnızca retrieval katmanıdır.
+        # Retrieval katmanı adayları bulur.
         # Nihai başlık skoru mevcut Python algoritmasıyla hesaplanır.
         title_similarity = SequenceMatcher(
             None,
@@ -172,7 +335,12 @@ def generate_work_candidates(
             canonical_title,
         ).ratio()
 
-        if title_similarity < 0.70:
+        # Başlık zayıf olsa bile identifier eşleşmesi bulunan
+        # aday reconciliation incelemesinden çıkarılmaz.
+        if (
+            title_similarity < 0.70
+            and not identifier_match
+        ):
             continue
 
         title_score = title_similarity * 0.70
@@ -187,6 +355,8 @@ def generate_work_candidates(
                 title_score,
                 4,
             ),
+            "identifier_match": identifier_match,
+            "identifier_score": 0.0,
             "language_match": False,
             "language_score": 0.0,
             "work_type_match": False,
