@@ -13,6 +13,17 @@ from ..models import (
 from .entity_merge import resolve_canonical_entity_id
 
 
+# Evaluation-only bands for ranking interpretation.
+# These are not production automatic-acceptance thresholds
+# and must not persist ReconciliationDecision rows.
+DECISION_POLICY_VERSION = "decision_policy_v1_eval"
+
+EVALUATION_AMBIGUOUS_MARGIN_BELOW = 0.05
+EVALUATION_STRONG_MARGIN_AT_LEAST = 0.15
+EVALUATION_STRONG_TOP_SCORE_AT_LEAST = 0.90
+EVALUATION_WEAK_TOP_SCORE_BELOW = 0.75
+
+
 def normalize_text(value: str | None) -> str | None:
     if value is None:
         return None
@@ -219,3 +230,209 @@ def generate_work_candidates(
     )
 
     return generated_candidates
+
+
+def rank_reconciliation_candidates(candidates):
+    return sorted(
+        candidates,
+        key=lambda candidate: (
+            -float(candidate.score),
+            str(getattr(candidate, "id", "")),
+        ),
+    )
+
+
+def summarize_candidate_evidence(evidence):
+    if not isinstance(evidence, dict):
+        evidence = {}
+
+    title_similarity = evidence.get(
+        "title_similarity"
+    )
+    language_match = bool(
+        evidence.get("language_match")
+    )
+    work_type_match = bool(
+        evidence.get("work_type_match")
+    )
+
+    strength = "weak"
+
+    if isinstance(title_similarity, (int, float)):
+        if (
+            title_similarity >= 0.95
+            and (
+                language_match
+                or work_type_match
+            )
+        ):
+            strength = "strong"
+        elif title_similarity >= 0.85:
+            strength = "moderate"
+
+    supporting_signals = []
+
+    if isinstance(title_similarity, (int, float)):
+        supporting_signals.append("title")
+
+    if language_match:
+        supporting_signals.append("language")
+
+    if work_type_match:
+        supporting_signals.append("work_type")
+
+    return {
+        "label": strength,
+        "title_similarity": title_similarity,
+        "language_match": language_match,
+        "work_type_match": work_type_match,
+        "supporting_signals": supporting_signals,
+    }
+
+
+def _candidate_policy_summary(candidate, rank):
+    evidence = candidate.evidence
+
+    if not isinstance(evidence, dict):
+        evidence = {}
+
+    return {
+        "rank": rank,
+        "id": candidate.id,
+        "candidate_entity_id": (
+            candidate.candidate_entity_id
+        ),
+        "score": candidate.score,
+        "method": candidate.method,
+        "evidence": evidence,
+        "evidence_strength": (
+            summarize_candidate_evidence(
+                evidence
+            )
+        ),
+    }
+
+
+def evaluate_decision_policy(candidates):
+    ranked_candidates = rank_reconciliation_candidates(
+        list(candidates)
+    )
+
+    ranked_summaries = [
+        _candidate_policy_summary(
+            candidate,
+            rank=index + 1,
+        )
+        for index, candidate in enumerate(
+            ranked_candidates
+        )
+    ]
+
+    top_candidate = (
+        ranked_summaries[0]
+        if ranked_summaries
+        else None
+    )
+    second_candidate = (
+        ranked_summaries[1]
+        if len(ranked_summaries) > 1
+        else None
+    )
+
+    score_margin = None
+
+    if (
+        top_candidate is not None
+        and second_candidate is not None
+    ):
+        score_margin = round(
+            float(top_candidate["score"])
+            - float(second_candidate["score"]),
+            4,
+        )
+
+    reasons = []
+    recommendation = "manual_review"
+    automatic_acceptance_eligible = False
+
+    if top_candidate is None:
+        recommendation = "new_entity_review"
+        reasons.append(
+            "No candidates were generated"
+        )
+    elif second_candidate is None:
+        recommendation = "manual_review"
+        reasons.append(
+            "Second candidate is absent, so uniqueness cannot be confirmed"
+        )
+        reasons.append(
+            "A single high score is not treated as automatic acceptance"
+        )
+    else:
+        top_score = float(top_candidate["score"])
+        evidence_strength = top_candidate[
+            "evidence_strength"
+        ]["label"]
+
+        if score_margin < EVALUATION_AMBIGUOUS_MARGIN_BELOW:
+            recommendation = "manual_review"
+            reasons.append(
+                "Top and second candidate scores are too close"
+            )
+        elif top_score < EVALUATION_WEAK_TOP_SCORE_BELOW:
+            recommendation = "new_entity_review"
+            reasons.append(
+                "Top candidate score is weak relative to evaluation bands"
+            )
+        elif (
+            top_score
+            >= EVALUATION_STRONG_TOP_SCORE_AT_LEAST
+            and score_margin
+            >= EVALUATION_STRONG_MARGIN_AT_LEAST
+            and evidence_strength == "strong"
+        ):
+            recommendation = (
+                "automatic_accept_eligible"
+            )
+            automatic_acceptance_eligible = True
+            reasons.append(
+                "Top candidate is clearly separated from the second candidate"
+            )
+            reasons.append(
+                "Evidence strength is labeled strong for evaluation only"
+            )
+        else:
+            recommendation = "manual_review"
+            reasons.append(
+                "Score margin or evidence is not strong enough for eligibility"
+            )
+
+    return {
+        "policy_version": DECISION_POLICY_VERSION,
+        "production_ready": False,
+        "writes_automatic_decision": False,
+        "evaluation_bands": {
+            "ambiguous_margin_below": (
+                EVALUATION_AMBIGUOUS_MARGIN_BELOW
+            ),
+            "strong_margin_at_least": (
+                EVALUATION_STRONG_MARGIN_AT_LEAST
+            ),
+            "strong_top_score_at_least": (
+                EVALUATION_STRONG_TOP_SCORE_AT_LEAST
+            ),
+            "weak_top_score_below": (
+                EVALUATION_WEAK_TOP_SCORE_BELOW
+            ),
+        },
+        "candidate_count": len(ranked_summaries),
+        "ranked_candidates": ranked_summaries,
+        "top_candidate": top_candidate,
+        "second_candidate": second_candidate,
+        "score_margin": score_margin,
+        "automatic_acceptance_eligible": (
+            automatic_acceptance_eligible
+        ),
+        "recommendation": recommendation,
+        "reasons": reasons,
+    }

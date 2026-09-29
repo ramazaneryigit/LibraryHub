@@ -14,7 +14,10 @@ from ..models import (
     SourceRecord,
 )
 from ..services.entity_merge import resolve_canonical_entity_id
-from ..services.reconciliation import generate_work_candidates
+from ..services.reconciliation import (
+    evaluate_decision_policy,
+    generate_work_candidates,
+)
 
 class ReconciliationDecisionCreate(BaseModel):
     candidate_id: uuid.UUID | None = None
@@ -150,7 +153,42 @@ def get_source_record_reconciliation(
             "created_at": source_record.created_at,
         },
         "candidates": candidate_results,
+        "policy": evaluate_decision_policy(
+            candidates
+        ),
         "decision": decision_result,
+    }
+
+
+@router.get("/source-records/{source_record_id}/policy")
+def get_source_record_decision_policy(
+    source_record_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    source_record = db.get(
+        SourceRecord,
+        source_record_id,
+    )
+
+    if source_record is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Source record not found",
+        )
+
+    candidates = db.scalars(
+        select(ReconciliationCandidate)
+        .where(
+            ReconciliationCandidate.source_record_id
+            == source_record_id
+        )
+    ).all()
+
+    return {
+        "source_record_id": source_record.id,
+        "policy": evaluate_decision_policy(
+            candidates
+        ),
     }
 
 @router.post("/source-records/{source_record_id}/decision", status_code=201)
@@ -304,4 +342,7 @@ def generate_reconciliation_candidates(
             }
             for candidate in candidates
         ],
+        "policy": evaluate_decision_policy(
+            candidates
+        ),
     }
