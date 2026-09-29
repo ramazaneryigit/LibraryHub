@@ -1065,9 +1065,19 @@ def create_source_classification(
     payload: SourceClassificationCreate,
     db: Session = Depends(get_db),
 ):
+    canonical_work_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=payload.work_entity_id,
+    )
+
+    canonical_institution_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=payload.institution_entity_id,
+    )
+
     work = db.get(
         Work,
-        payload.work_entity_id,
+        canonical_work_entity_id,
     )
 
     if work is None:
@@ -1078,7 +1088,7 @@ def create_source_classification(
 
     institution = db.get(
         CollectiveAgent,
-        payload.institution_entity_id,
+        canonical_institution_entity_id,
     )
 
     if institution is None:
@@ -1120,8 +1130,8 @@ def create_source_classification(
             )
 
     observation = SourceClassification(
-        work_entity_id=payload.work_entity_id,
-        institution_entity_id=payload.institution_entity_id,
+        work_entity_id=canonical_work_entity_id,
+        institution_entity_id=canonical_institution_entity_id,
         scheme_id=payload.scheme_id,
         scheme_edition_id=payload.scheme_edition_id,
         notation=payload.notation,
@@ -1202,10 +1212,19 @@ def create_classification_validation(
             detail="Source classification not found",
         )
 
+    canonical_suggested_classification_entity_id = None
+
     if payload.suggested_classification_entity_id is not None:
+        canonical_suggested_classification_entity_id = (
+            resolve_canonical_entity_id(
+                db=db,
+                entity_id=payload.suggested_classification_entity_id,
+            )
+        )
+
         suggested_classification = db.get(
             ClassificationNode,
-            payload.suggested_classification_entity_id,
+            canonical_suggested_classification_entity_id,
         )
 
         if suggested_classification is None:
@@ -1246,7 +1265,7 @@ def create_classification_validation(
         warning_code=payload.warning_code,
         message=payload.message,
         suggested_classification_entity_id=(
-            payload.suggested_classification_entity_id
+            canonical_suggested_classification_entity_id
         ),
         confidence=payload.confidence,
         validation_method=payload.validation_method,
