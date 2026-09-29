@@ -14,6 +14,7 @@ from ..models import (
     ItemAgentRelation,
     Person,
 )
+from ..services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(tags=["item-agents"])
@@ -30,7 +31,17 @@ def add_item_agent(
     payload: AgentRelationCreate,
     db: Session = Depends(get_db),
 ):
-    item = db.get(Item, item_entity_id)
+    canonical_item_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=item_entity_id,
+    )
+
+    canonical_agent_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=payload.agent_entity_id,
+    )
+
+    item = db.get(Item, canonical_item_entity_id)
 
     if item is None:
         raise HTTPException(
@@ -38,7 +49,7 @@ def add_item_agent(
             detail="Item not found",
         )
 
-    agent = db.get(Entity, payload.agent_entity_id)
+    agent = db.get(Entity, canonical_agent_entity_id)
 
     if agent is None:
         raise HTTPException(
@@ -53,8 +64,8 @@ def add_item_agent(
         )
 
     relation = ItemAgentRelation(
-        item_entity_id=item_entity_id,
-        agent_entity_id=payload.agent_entity_id,
+        item_entity_id=canonical_item_entity_id,
+        agent_entity_id=canonical_agent_entity_id,
         role=payload.role,
     )
 
@@ -69,8 +80,8 @@ def add_item_agent(
         )
 
     return {
-        "item_entity_id": str(item_entity_id),
-        "agent_entity_id": str(payload.agent_entity_id),
+        "item_entity_id": str(canonical_item_entity_id),
+        "agent_entity_id": str(canonical_agent_entity_id),
         "role": payload.role,
     }
 
@@ -80,7 +91,12 @@ def list_item_agents(
     item_entity_id: UUID,
     db: Session = Depends(get_db),
 ):
-    item = db.get(Item, item_entity_id)
+    canonical_item_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=item_entity_id,
+    )
+
+    item = db.get(Item, canonical_item_entity_id)
 
     if item is None:
         raise HTTPException(
@@ -91,7 +107,7 @@ def list_item_agents(
     relations = db.scalars(
         select(ItemAgentRelation)
         .where(
-            ItemAgentRelation.item_entity_id == item_entity_id
+            ItemAgentRelation.item_entity_id == canonical_item_entity_id
         )
         .order_by(ItemAgentRelation.role)
     ).all()
@@ -99,13 +115,18 @@ def list_item_agents(
     result = []
 
     for relation in relations:
-        agent = db.get(Entity, relation.agent_entity_id)
+        canonical_agent_entity_id = resolve_canonical_entity_id(
+            db=db,
+            entity_id=relation.agent_entity_id,
+        )
+
+        agent = db.get(Entity, canonical_agent_entity_id)
 
         if agent is None:
             continue
 
         if agent.entity_type == "PERSON":
-            person = db.get(Person, relation.agent_entity_id)
+            person = db.get(Person, canonical_agent_entity_id)
 
             if person is not None:
                 result.append(
@@ -120,12 +141,12 @@ def list_item_agents(
         elif agent.entity_type == "ORGANIZATION":
             organization = db.get(
                 CollectiveAgent,
-                relation.agent_entity_id,
+                canonical_agent_entity_id,
             )
 
             result.append(
                 {
-                    "entity_id": str(agent.id),
+                    "entity_id": str(canonical_agent_entity_id),
                     "entity_type": "ORGANIZATION",
                     "name": (
                         organization.canonical_name
