@@ -4,16 +4,25 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..models import Work
+from .entity_merge import resolve_canonical_entity_id
 
 
 def build_work_detail(
     work_entity_id: UUID,
     db: Session,
 ):
+    canonical_work_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=work_entity_id,
+    )
+
+    work_entity_id = canonical_work_entity_id
+
     work = db.get(Work, work_entity_id)
 
     if work is None:
         return None
+
 
     # Authors
     author_query = """

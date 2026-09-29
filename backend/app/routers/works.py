@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Entity, Work
 from ..services.work_detail import build_work_detail
+from ..services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(
@@ -103,7 +104,12 @@ def get_work(
     entity_id: UUID,
     db: Session = Depends(get_db),
 ):
-    work = db.get(Work, entity_id)
+    canonical_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=entity_id,
+    )
+
+    work = db.get(Work, canonical_entity_id)
 
     if work is None:
         raise HTTPException(
@@ -119,8 +125,7 @@ def get_work(
         "work_type": work.work_type,
         "description": work.description,
     }
-
-
+    
 @router.get("/{work_entity_id}/detail")
 def get_work_detail(
     work_entity_id: UUID,
