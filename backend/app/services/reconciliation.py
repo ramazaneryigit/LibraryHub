@@ -314,11 +314,18 @@ def build_identifier_evidence(
             match["value"],
         )
 
+        canonical_work_entity_id = str(
+            match.get(
+                "canonical_work_entity_id",
+                match["work_entity_id"],
+            )
+        )
+
         works_by_identifier.setdefault(
             key,
             set(),
         ).add(
-            str(match["work_entity_id"])
+            canonical_work_entity_id
         )
 
     matched_identifiers = []
@@ -359,75 +366,55 @@ def generate_work_candidates(
     if source_title is None:
         return []
 
-    # Başlık üzerinden küçük aday havuzu.
     title_candidates = retrieve_work_candidates(
         db=db,
         source_title=source_title,
     )
 
-    # Identifier eşleşmeleri yalnızca bir kez sorgulanır.
     identifier_matches = retrieve_identifier_matches(
         db=db,
         raw_data=raw_data,
     )
 
-    identifier_work_ids = {
-        match["work_entity_id"]
-        for match in identifier_matches
-    }
+    # Identifier ile bulunan eski/merge edilmiş Work'leri
+    # canonical Work kimliğine çöz.
+    canonical_identifier_matches = []
 
-    if identifier_work_ids:
-        identifier_candidates = list(
-            db.scalars(
-                select(Work).where(
-                    Work.entity_id.in_(
-                        identifier_work_ids
-                    )
-                )
-            ).all()
+    for match in identifier_matches:
+        canonical_work_entity_id = resolve_canonical_entity_id(
+            db=db,
+            entity_id=match["work_entity_id"],
         )
-    else:
-        identifier_candidates = []
 
-    identifier_candidate_ids = {
-        work.entity_id
-        for work in identifier_candidates
+        canonical_identifier_matches.append(
+            {
+                **match,
+                "canonical_work_entity_id":
+                    canonical_work_entity_id,
+            }
+        )
+
+    identifier_canonical_ids = {
+        match["canonical_work_entity_id"]
+        for match in canonical_identifier_matches
     }
 
-    # Başlık ve identifier adaylarını tek havuzda birleştir.
-    works_by_entity_id = {
-        work.entity_id: work
-        for work in title_candidates
-    }
-
-    for work in identifier_candidates:
-        works_by_entity_id[work.entity_id] = work
-
-    works = list(
-        works_by_entity_id.values()
+    # Başlık adaylarını da canonical Work'e çöz.
+    canonical_candidate_ids = set(
+        identifier_canonical_ids
     )
 
+    for work in title_candidates:
+        canonical_candidate_ids.add(
+            resolve_canonical_entity_id(
+                db=db,
+                entity_id=work.entity_id,
+            )
+        )
+
     generated_candidates = []
-    seen_canonical_entity_ids = set()
 
-    for work in works:
-        identifier_match = (
-            work.entity_id
-            in identifier_candidate_ids
-        )
-
-        canonical_entity_id = resolve_canonical_entity_id(
-            db=db,
-            entity_id=work.entity_id,
-        )
-
-        if canonical_entity_id in seen_canonical_entity_ids:
-            continue
-
-        seen_canonical_entity_ids.add(
-            canonical_entity_id
-        )
-
+    for canonical_entity_id in canonical_candidate_ids:
         canonical_work = db.get(
             Work,
             canonical_entity_id,
@@ -449,7 +436,16 @@ def generate_work_candidates(
             canonical_title,
         ).ratio()
 
-        # Identifier eşleşmesi varsa zayıf başlık adayı elemez.
+        identifier_evidence = build_identifier_evidence(
+            identifier_matches=canonical_identifier_matches,
+            work_entity_id=canonical_entity_id,
+        )
+
+        identifier_match = identifier_evidence[
+            "match"
+        ]
+
+        # Identifier kanıtı yoksa zayıf başlık adayını ele.
         if (
             title_similarity < 0.70
             and not identifier_match
@@ -459,12 +455,8 @@ def generate_work_candidates(
         title_score = (
             title_similarity * 0.70
         )
-        score = title_score
 
-        identifier_evidence = build_identifier_evidence(
-            identifier_matches=identifier_matches,
-            work_entity_id=work.entity_id,
-        )
+        score = title_score
 
         evidence = {
             "title_similarity": round(
@@ -475,9 +467,7 @@ def generate_work_candidates(
                 title_score,
                 4,
             ),
-            "identifier_match": identifier_evidence[
-                "match"
-            ],
+            "identifier_match": identifier_match,
             "identifier_score": 0.0,
             "identifier_evidence": identifier_evidence,
             "language_match": False,
@@ -511,9 +501,11 @@ def generate_work_candidates(
         ].items():
             if comparison["status"] == "match":
                 score += 0.15
+
                 evidence[
                     f"{field}_match"
                 ] = True
+
                 evidence[
                     f"{field}_score"
                 ] = 0.15
