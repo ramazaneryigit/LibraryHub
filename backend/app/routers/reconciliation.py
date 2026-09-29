@@ -14,6 +14,7 @@ from ..models import (
     SourceRecord,
 )
 from ..services.entity_merge import resolve_canonical_entity_id
+from ..services.reconciliation import generate_work_candidates
 
 class ReconciliationDecisionCreate(BaseModel):
     candidate_id: uuid.UUID | None = None
@@ -254,4 +255,53 @@ def create_reconciliation_decision(
         "reviewed_at": decision.reviewed_at,
         "created_at": decision.created_at,
         "updated_at": decision.updated_at,
+    }
+
+@router.post(
+    "/source-records/{source_record_id}/generate-candidates"
+)
+def generate_reconciliation_candidates(
+    source_record_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    source_record = db.get(
+        SourceRecord,
+        source_record_id,
+    )
+
+    if source_record is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Source record not found",
+        )
+
+    if source_record.record_type != "work":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Automatic candidate generation currently "
+                "supports only work records"
+            ),
+        )
+
+    candidates = generate_work_candidates(
+        db=db,
+        source_record=source_record,
+    )
+
+    return {
+        "source_record_id": source_record.id,
+        "candidate_count": len(candidates),
+        "candidates": [
+            {
+                "id": candidate.id,
+                "candidate_entity_id": (
+                    candidate.candidate_entity_id
+                ),
+                "score": candidate.score,
+                "method": candidate.method,
+                "evidence": candidate.evidence,
+            }
+            for candidate in candidates
+        ],
     }
