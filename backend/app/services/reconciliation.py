@@ -1,7 +1,7 @@
 import re
 import unicodedata
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from difflib import SequenceMatcher
 
@@ -149,123 +149,7 @@ def normalize_source_identifiers(
 
     return normalized_identifiers
 
-def retrieve_work_candidates_by_identifier(
-    db: Session,
-    raw_data: dict,
-) -> list[Work]:
-    source_identifiers = normalize_source_identifiers(
-        raw_data
-    )
 
-    if not source_identifiers:
-        return []
-
-    manifestation_identifiers = [
-        identifier
-        for identifier in source_identifiers
-        if identifier["scheme"] in {"isbn", "issn"}
-    ]
-
-    if not manifestation_identifiers:
-        return []
-
-    conditions = []
-
-    for identifier in manifestation_identifiers:
-        conditions.append(
-            (
-                func.lower(Identifier.scheme)
-                == identifier["scheme"]
-            )
-            & (
-                func.replace(
-                    func.replace(
-                        Identifier.value,
-                        "-",
-                        "",
-                    ),
-                    " ",
-                    "",
-                )
-                == identifier["value"]
-            )
-        )
-
-    if not conditions:
-        return []
-
-    from sqlalchemy import or_
-
-    statement = (
-        select(Work)
-        .join(
-            WorkExpression,
-            WorkExpression.work_entity_id
-            == Work.entity_id,
-        )
-        .join(
-            ExpressionManifestation,
-            ExpressionManifestation.expression_entity_id
-            == WorkExpression.expression_entity_id,
-        )
-        .join(
-            Identifier,
-            Identifier.entity_id
-            == ExpressionManifestation.manifestation_entity_id,
-        )
-        .where(
-            or_(*conditions)
-        )
-        .distinct()
-    )
-
-    return list(
-        db.scalars(statement).all()
-    )
-    
-def build_identifier_evidence(
-    db: Session,
-    raw_data: dict,
-    work_entity_id,
-) -> dict:
-    source_identifiers = normalize_source_identifiers(
-        raw_data
-    )
-
-    target_work_entity_id = str(work_entity_id)
-    matched_identifiers = []
-
-    for source_identifier in source_identifiers:
-        identifier_works = retrieve_work_candidates_by_identifier(
-            db=db,
-            raw_data={
-                "identifiers": [
-                    source_identifier
-                ]
-            },
-        )
-
-        matched_work_ids = {
-            str(work.entity_id)
-            for work in identifier_works
-        }
-
-        if target_work_entity_id not in matched_work_ids:
-            continue
-
-        matched_identifiers.append(
-            {
-                "scheme": source_identifier["scheme"],
-                "value": source_identifier["value"],
-                "work_count": len(matched_work_ids),
-                "unique": len(matched_work_ids) == 1,
-            }
-        )
-
-    return {
-        "match": bool(matched_identifiers),
-        "matches": matched_identifiers,
-    }
 
 def retrieve_work_candidates(
     db: Session,
@@ -289,6 +173,176 @@ def retrieve_work_candidates(
         .limit(WORK_RETRIEVAL_LIMIT)
     ).all()
 
+def retrieve_identifier_matches(
+    db: Session,
+    raw_data: dict,
+) -> list[dict]:
+    source_identifiers = normalize_source_identifiers(
+        raw_data
+    )
+
+    if not source_identifiers:
+        return []
+
+    manifestation_identifiers = [
+        identifier
+        for identifier in source_identifiers
+        if identifier["scheme"] in {"isbn", "issn"}
+    ]
+
+    if not manifestation_identifiers:
+        return []
+
+    conditions = []
+
+    for identifier in manifestation_identifiers:
+        normalized_db_value = func.upper(
+            func.replace(
+                func.replace(
+                    Identifier.value,
+                    "-",
+                    "",
+                ),
+                " ",
+                "",
+            )
+        )
+
+        conditions.append(
+            (
+                func.lower(Identifier.scheme)
+                == identifier["scheme"]
+            )
+            & (
+                normalized_db_value
+                == identifier["value"].upper()
+            )
+        )
+
+    statement = (
+        select(
+            Identifier.scheme,
+            Identifier.value,
+            Work.entity_id,
+        )
+        .join(
+            ExpressionManifestation,
+            ExpressionManifestation.manifestation_entity_id
+            == Identifier.entity_id,
+        )
+        .join(
+            WorkExpression,
+            WorkExpression.expression_entity_id
+            == ExpressionManifestation.expression_entity_id,
+        )
+        .join(
+            Work,
+            Work.entity_id
+            == WorkExpression.work_entity_id,
+        )
+        .where(
+            or_(*conditions)
+        )
+        .distinct()
+    )
+
+    rows = db.execute(statement).all()
+
+    matches = []
+
+    for scheme, value, work_entity_id in rows:
+        normalized_scheme = scheme.strip().lower()
+
+        normalized_value = value.strip()
+
+        if normalized_scheme in {"isbn", "issn"}:
+            normalized_value = (
+                normalized_value
+                .replace("-", "")
+                .replace(" ", "")
+                .upper()
+            )
+
+        matches.append(
+            {
+                "scheme": normalized_scheme,
+                "value": normalized_value,
+                "work_entity_id": work_entity_id,
+            }
+        )
+
+    return matches
+
+
+def retrieve_work_candidates_by_identifier(
+    db: Session,
+    raw_data: dict,
+) -> list[Work]:
+    matches = retrieve_identifier_matches(
+        db=db,
+        raw_data=raw_data,
+    )
+
+    work_entity_ids = {
+        match["work_entity_id"]
+        for match in matches
+    }
+
+    if not work_entity_ids:
+        return []
+
+    return list(
+        db.scalars(
+            select(Work).where(
+                Work.entity_id.in_(work_entity_ids)
+            )
+        ).all()
+    )
+
+
+def build_identifier_evidence(
+    identifier_matches: list[dict],
+    work_entity_id,
+) -> dict:
+    target_work_entity_id = str(work_entity_id)
+
+    works_by_identifier = {}
+
+    for match in identifier_matches:
+        key = (
+            match["scheme"],
+            match["value"],
+        )
+
+        works_by_identifier.setdefault(
+            key,
+            set(),
+        ).add(
+            str(match["work_entity_id"])
+        )
+
+    matched_identifiers = []
+
+    for (
+        scheme,
+        value,
+    ), matched_work_ids in works_by_identifier.items():
+        if target_work_entity_id not in matched_work_ids:
+            continue
+
+        matched_identifiers.append(
+            {
+                "scheme": scheme,
+                "value": value,
+                "work_count": len(matched_work_ids),
+                "unique": len(matched_work_ids) == 1,
+            }
+        )
+
+    return {
+        "match": bool(matched_identifiers),
+        "matches": matched_identifiers,
+    }
 
 def generate_work_candidates(
     db: Session,
@@ -305,27 +359,42 @@ def generate_work_candidates(
     if source_title is None:
         return []
 
-    # PostgreSQL pg_trgm yalnızca güçlü olabilecek küçük bir Work
-    # havuzunu getirir. Böylece bütün works tablosu Python'a çekilmez.
+    # Başlık üzerinden küçük aday havuzu.
     title_candidates = retrieve_work_candidates(
         db=db,
         source_title=source_title,
     )
 
-    # ISBN / ISSN gibi identifier değerlerinden bulunan Work adayları.
-    identifier_candidates = retrieve_work_candidates_by_identifier(
+    # Identifier eşleşmeleri yalnızca bir kez sorgulanır.
+    identifier_matches = retrieve_identifier_matches(
         db=db,
         raw_data=raw_data,
     )
 
-    # Hangi Work'lerin identifier üzerinden bulunduğunu sakla.
+    identifier_work_ids = {
+        match["work_entity_id"]
+        for match in identifier_matches
+    }
+
+    if identifier_work_ids:
+        identifier_candidates = list(
+            db.scalars(
+                select(Work).where(
+                    Work.entity_id.in_(
+                        identifier_work_ids
+                    )
+                )
+            ).all()
+        )
+    else:
+        identifier_candidates = []
+
     identifier_candidate_ids = {
         work.entity_id
         for work in identifier_candidates
     }
 
-    # Başlık ve identifier retrieval sonuçlarını entity_id üzerinden
-    # tek aday havuzunda birleştir.
+    # Başlık ve identifier adaylarını tek havuzda birleştir.
     works_by_entity_id = {
         work.entity_id: work
         for work in title_candidates
@@ -334,14 +403,17 @@ def generate_work_candidates(
     for work in identifier_candidates:
         works_by_entity_id[work.entity_id] = work
 
-    works = list(works_by_entity_id.values())
+    works = list(
+        works_by_entity_id.values()
+    )
 
     generated_candidates = []
     seen_canonical_entity_ids = set()
 
     for work in works:
         identifier_match = (
-            work.entity_id in identifier_candidate_ids
+            work.entity_id
+            in identifier_candidate_ids
         )
 
         canonical_entity_id = resolve_canonical_entity_id(
@@ -371,29 +443,26 @@ def generate_work_candidates(
         if canonical_title is None:
             continue
 
-        # Retrieval katmanı adayları bulur.
-        # Nihai başlık skoru mevcut Python algoritmasıyla hesaplanır.
         title_similarity = SequenceMatcher(
             None,
             source_title,
             canonical_title,
         ).ratio()
 
-        # Başlık zayıf olsa bile identifier eşleşmesi bulunan
-        # aday reconciliation incelemesinden çıkarılmaz.
+        # Identifier eşleşmesi varsa zayıf başlık adayı elemez.
         if (
             title_similarity < 0.70
             and not identifier_match
         ):
             continue
 
-        title_score = title_similarity * 0.70
+        title_score = (
+            title_similarity * 0.70
+        )
         score = title_score
 
-        # Identifier eşleşmesinin ayrıntılı evidence bilgisini üret.
         identifier_evidence = build_identifier_evidence(
-            db=db,
-            raw_data=raw_data,
+            identifier_matches=identifier_matches,
             work_entity_id=work.entity_id,
         )
 
@@ -406,7 +475,9 @@ def generate_work_candidates(
                 title_score,
                 4,
             ),
-            "identifier_match": identifier_evidence["match"],
+            "identifier_match": identifier_evidence[
+                "match"
+            ],
             "identifier_score": 0.0,
             "identifier_evidence": identifier_evidence,
             "language_match": False,
@@ -415,7 +486,9 @@ def generate_work_candidates(
             "work_type_score": 0.0,
         }
 
-        evidence["evidence_version"] = "work_fields_v2"
+        evidence["evidence_version"] = (
+            "work_fields_v2"
+        )
 
         evidence["input_fingerprints"] = capture_inputs(
             source_record,
@@ -438,8 +511,12 @@ def generate_work_candidates(
         ].items():
             if comparison["status"] == "match":
                 score += 0.15
-                evidence[f"{field}_match"] = True
-                evidence[f"{field}_score"] = 0.15
+                evidence[
+                    f"{field}_match"
+                ] = True
+                evidence[
+                    f"{field}_score"
+                ] = 0.15
 
         score = round(
             min(score, 1.0),
@@ -447,7 +524,9 @@ def generate_work_candidates(
         )
 
         existing_candidate = db.scalar(
-            select(ReconciliationCandidate).where(
+            select(
+                ReconciliationCandidate
+            ).where(
                 ReconciliationCandidate.source_record_id
                 == source_record.id,
                 ReconciliationCandidate.candidate_entity_id
@@ -474,7 +553,10 @@ def generate_work_candidates(
         )
 
         db.add(candidate)
-        generated_candidates.append(candidate)
+
+        generated_candidates.append(
+            candidate
+        )
 
     db.commit()
 
