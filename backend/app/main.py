@@ -17,6 +17,7 @@ from .routers import (
     manifestations,
     items,
     search,
+    reconciliation,
 )
 
 
@@ -40,6 +41,7 @@ app.include_router(expressions.router)
 app.include_router(manifestations.router)
 app.include_router(items.router)
 app.include_router(search.router)
+app.include_router(reconciliation.router)
 
 app.mount(
     "/static",
