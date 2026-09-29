@@ -11,6 +11,7 @@ from ..models import (
     Work,
 )
 from .entity_merge import resolve_canonical_entity_id
+from .reconciliation_freshness import METHOD, capture_inputs
 
 
 # Evaluation-only bands for ranking interpretation.
@@ -53,6 +54,37 @@ def normalize_text(value: str | None) -> str | None:
     return normalized or None
 
 
+def compare_field(source_value, candidate_value) -> dict:
+    """Compare controlled text values without confusing absence with conflict."""
+    def classify(value):
+        if value is not None and not isinstance(value, str):
+            return None, "invalid"
+        normalized = normalize_text(value)
+        return normalized, "missing" if normalized is None else "present"
+
+    source_normalized, source_state = classify(source_value)
+    candidate_normalized, candidate_state = classify(candidate_value)
+    if "invalid" in (source_state, candidate_state):
+        status = "invalid_value"
+    elif source_state == candidate_state == "missing":
+        status = "missing_both"
+    elif source_state == "missing":
+        status = "missing_source"
+    elif candidate_state == "missing":
+        status = "missing_candidate"
+    else:
+        status = "match" if source_normalized == candidate_normalized else "conflict"
+    return {
+        "status": status,
+        "source_value": source_value,
+        "candidate_value": candidate_value,
+        "source_normalized": source_normalized,
+        "candidate_normalized": candidate_normalized,
+        "source_state": source_state,
+        "candidate_state": candidate_state,
+    }
+
+
 def generate_work_candidates(
     db: Session,
     source_record: SourceRecord,
@@ -65,13 +97,6 @@ def generate_work_candidates(
     source_title = normalize_text(
         raw_data.get("title")
     )
-    source_language = normalize_text(
-        raw_data.get("language")
-    )
-    source_work_type = normalize_text(
-        raw_data.get("work_type")
-    )
-
     if source_title is None:
         return []
 
@@ -156,31 +181,17 @@ def generate_work_candidates(
             "work_type_score": 0.0,
         }
 
-        canonical_language = normalize_text(
-            canonical_work.original_language
-        )
-
-        if (
-            source_language is not None
-            and canonical_language is not None
-            and source_language == canonical_language
-        ):
-            score += 0.15
-            evidence["language_match"] = True
-            evidence["language_score"] = 0.15
-
-        canonical_work_type = normalize_text(
-            canonical_work.work_type
-        )
-
-        if (
-            source_work_type is not None
-            and canonical_work_type is not None
-            and source_work_type == canonical_work_type
-        ):
-            score += 0.15
-            evidence["work_type_match"] = True
-            evidence["work_type_score"] = 0.15
+        evidence["evidence_version"] = "work_fields_v2"
+        evidence["input_fingerprints"] = capture_inputs(source_record, canonical_work)
+        evidence["field_comparisons"] = {
+            "language": compare_field(raw_data.get("language"), canonical_work.original_language),
+            "work_type": compare_field(raw_data.get("work_type"), canonical_work.work_type),
+        }
+        for field, comparison in evidence["field_comparisons"].items():
+            if comparison["status"] == "match":
+                score += 0.15
+                evidence[f"{field}_match"] = True
+                evidence[f"{field}_score"] = 0.15
 
         score = round(
             min(score, 1.0),
@@ -199,7 +210,7 @@ def generate_work_candidates(
         if existing_candidate is not None:
             existing_candidate.score = score
             existing_candidate.method = (
-                "work_fuzzy_title_v2"
+                METHOD
             )
             existing_candidate.evidence = evidence
 
@@ -212,7 +223,7 @@ def generate_work_candidates(
             source_record_id=source_record.id,
             candidate_entity_id=canonical_entity_id,
             score=score,
-            method="work_fuzzy_title_v2",
+            method=METHOD,
             evidence=evidence,
         )
 

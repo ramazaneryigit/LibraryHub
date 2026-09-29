@@ -12,12 +12,13 @@ from ..models import (
     ReconciliationCandidate,
     ReconciliationDecision,
     SourceRecord,
+    Work,
 )
-from ..services.entity_merge import resolve_canonical_entity_id
-from ..services.reconciliation import (
-    evaluate_decision_policy,
-    generate_work_candidates,
-)
+from ..services.entity_merge import EntityMergeCycleError, resolve_canonical_entity_id
+from ..services.reconciliation_freshness import check_freshness
+from ..services.reconciliation_snapshot import capture_decision_snapshot
+from ..services.reconciliation import generate_work_candidates
+from ..services.reconciliation_policy import evaluate_work_reconciliation
 
 class ReconciliationDecisionCreate(BaseModel):
     candidate_id: uuid.UUID | None = None
@@ -53,6 +54,19 @@ router = APIRouter(
     prefix="/reconciliation",
     tags=["reconciliation"],
 )
+
+
+@router.get("/source-records/{source_record_id}/evaluation")
+def evaluate_reconciliation(
+    source_record_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    source_record = db.get(SourceRecord, source_record_id)
+    if source_record is None:
+        raise HTTPException(status_code=404, detail="Source record not found")
+    if source_record.record_type != "work":
+        raise HTTPException(status_code=400, detail="Policy evaluation supports only work records")
+    return evaluate_work_reconciliation(db, source_record)
 
 
 @router.get("/source-records/{source_record_id}")
@@ -135,6 +149,7 @@ def get_source_record_reconciliation(
             "reviewed_at": decision.reviewed_at,
             "created_at": decision.created_at,
             "updated_at": decision.updated_at,
+            "evidence_snapshot": decision.evidence_snapshot,
         }
 
     return {
@@ -153,42 +168,7 @@ def get_source_record_reconciliation(
             "created_at": source_record.created_at,
         },
         "candidates": candidate_results,
-        "policy": evaluate_decision_policy(
-            candidates
-        ),
         "decision": decision_result,
-    }
-
-
-@router.get("/source-records/{source_record_id}/policy")
-def get_source_record_decision_policy(
-    source_record_id: uuid.UUID,
-    db: Session = Depends(get_db),
-):
-    source_record = db.get(
-        SourceRecord,
-        source_record_id,
-    )
-
-    if source_record is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Source record not found",
-        )
-
-    candidates = db.scalars(
-        select(ReconciliationCandidate)
-        .where(
-            ReconciliationCandidate.source_record_id
-            == source_record_id
-        )
-    ).all()
-
-    return {
-        "source_record_id": source_record.id,
-        "policy": evaluate_decision_policy(
-            candidates
-        ),
     }
 
 @router.post("/source-records/{source_record_id}/decision", status_code=201)
@@ -256,6 +236,38 @@ def create_reconciliation_decision(
             detail="New entity decision must not have a candidate",
         )
 
+    if payload.status == "accepted":
+        if payload.origin == "automatic":
+            raise HTTPException(status_code=409, detail={
+                "code": "automatic_acceptance_not_calibrated",
+                "message": "Automatic acceptance is disabled; manual review is required",
+            })
+        if source_record.record_type != "work":
+            raise HTTPException(status_code=400, detail={
+                "code": "acceptance_record_type_unsupported",
+                "message": "Acceptance validation currently supports only work records",
+            })
+        try:
+            canonical_id = resolve_canonical_entity_id(db, candidate.candidate_entity_id)
+        except EntityMergeCycleError:
+            raise HTTPException(status_code=409, detail={
+                "code": "canonical_cycle",
+                "message": "Canonical identity must be repaired before acceptance",
+            })
+        work = db.get(Work, canonical_id)
+        if work is None:
+            raise HTTPException(status_code=409, detail={
+                "code": "canonical_work_missing",
+                "message": "Candidate must resolve to an existing Work",
+            })
+        freshness = check_freshness(source_record, work, candidate)
+        if freshness["status"] != "fresh":
+            raise HTTPException(status_code=409, detail={
+                "code": "candidate_evidence_requires_regeneration",
+                "message": "Regenerate candidate evidence and review it before acceptance",
+                "freshness": freshness,
+            })
+
     decision = ReconciliationDecision(
         source_record_id=source_record_id,
         candidate_id=(
@@ -276,6 +288,7 @@ def create_reconciliation_decision(
         ),
     )
 
+    decision.evidence_snapshot = capture_decision_snapshot(db, source_record, candidate, decision)
     db.add(decision)
     db.commit()
     db.refresh(decision)
@@ -293,6 +306,7 @@ def create_reconciliation_decision(
         "reviewed_at": decision.reviewed_at,
         "created_at": decision.created_at,
         "updated_at": decision.updated_at,
+        "evidence_snapshot": decision.evidence_snapshot,
     }
 
 @router.post(
@@ -342,7 +356,4 @@ def generate_reconciliation_candidates(
             }
             for candidate in candidates
         ],
-        "policy": evaluate_decision_policy(
-            candidates
-        ),
     }
