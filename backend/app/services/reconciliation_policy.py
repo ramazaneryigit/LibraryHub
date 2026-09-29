@@ -125,5 +125,6 @@ def evaluate_work_reconciliation(db: Session, source: SourceRecord) -> dict:
         "current_decision": None if decision is None else {
             "id": decision.id, "candidate_id": decision.candidate_id,
             "status": decision.status, "origin": decision.origin,
+            "evidence_snapshot": decision.evidence_snapshot,
         },
     }

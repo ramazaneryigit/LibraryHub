@@ -118,3 +118,30 @@ installation; no migration is needed. Tests exercise writes only in isolated SQL
 The guard checks current values before insertion; it is not a concurrency lock,
 immutable evidence snapshot, or authenticated reviewer identity. Decision history
 and concurrency-safe evidence persistence remain future work.
+
+## Decision evidence snapshot v1
+
+Migration `c91f4a20de76` adds nullable `reconciliation_decisions.evidence_snapshot`
+JSON and a PostgreSQL write-once trigger. Deploy this migration BEFORE serving the
+new API code. Existing decisions retain SQL NULL; no historical evidence is guessed.
+Downgrade removes the trigger/function and column, losing snapshots, so it requires
+an explicit recovery decision and backup.
+
+Each newly recorded decision captures detached source raw data and identity,
+decision inputs, candidate ID, historical/canonical IDs, score, method, evidence,
+freshness and the current canonical Work scoring fields. Decisions without a
+candidate still capture source and decision information. The POST response, source
+record GET and evaluation current_decision expose `evidence_snapshot`.
+
+Candidate regeneration and canonical redirects do not rewrite snapshots. PostgreSQL
+rejects changing the snapshot column, including backfilling legacy NULL values.
+The trigger does not prevent deletion of decision rows or existing source-record
+cascade deletes, and privileged schema changes can remove it. This is evidence
+preservation for retained decisions, not a complete immutable audit store or a
+concurrency-safe decision history. User authentication and reviewer identity remain
+separate work.
+
+Verification: 33 isolated SQLite service/HTTP tests pass, including preservation
+across regeneration, redirects, nested mutable data and legacy decisions. PostgreSQL
+migration SQL was generated and inspected; PostgreSQL trigger execution must still
+be verified in the deployment environment.

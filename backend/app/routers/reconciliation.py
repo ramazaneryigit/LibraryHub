@@ -16,6 +16,7 @@ from ..models import (
 )
 from ..services.entity_merge import EntityMergeCycleError, resolve_canonical_entity_id
 from ..services.reconciliation_freshness import check_freshness
+from ..services.reconciliation_snapshot import capture_decision_snapshot
 from ..services.reconciliation import generate_work_candidates
 from ..services.reconciliation_policy import evaluate_work_reconciliation
 
@@ -148,6 +149,7 @@ def get_source_record_reconciliation(
             "reviewed_at": decision.reviewed_at,
             "created_at": decision.created_at,
             "updated_at": decision.updated_at,
+            "evidence_snapshot": decision.evidence_snapshot,
         }
 
     return {
@@ -286,6 +288,7 @@ def create_reconciliation_decision(
         ),
     )
 
+    decision.evidence_snapshot = capture_decision_snapshot(db, source_record, candidate, decision)
     db.add(decision)
     db.commit()
     db.refresh(decision)
@@ -303,6 +306,7 @@ def create_reconciliation_decision(
         "reviewed_at": decision.reviewed_at,
         "created_at": decision.created_at,
         "updated_at": decision.updated_at,
+        "evidence_snapshot": decision.evidence_snapshot,
     }
 
 @router.post(

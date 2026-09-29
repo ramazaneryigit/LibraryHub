@@ -348,6 +348,59 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
 
 
+    def test_decision_snapshot_survives_regeneration_and_source_change(self):
+        candidate = self.fresh_candidate()
+        response = self.decide(candidate)
+        self.assertEqual(response.status_code, 201)
+        snapshot = response.json()["evidence_snapshot"]
+        self.assertEqual(snapshot["candidate"]["score"], .9667)
+        self.assertEqual(snapshot["candidate"]["freshness_at_decision"]["status"], "fresh")
+        self.source.raw_data = {**self.source.raw_data, "language": "en"}
+        self.db.commit()
+        generate_work_candidates(self.db, self.source)
+        self.assertNotEqual(candidate.score, snapshot["candidate"]["score"])
+        decision = self.db.scalar(select(ReconciliationDecision).where(ReconciliationDecision.source_record_id == self.source.id))
+        self.db.expire(decision)
+        self.assertEqual(decision.evidence_snapshot, snapshot)
+        result = self.client.get(f'/reconciliation/source-records/{self.source.id}').json()
+        self.assertEqual(result["decision"]["evidence_snapshot"], snapshot)
+        self.assertEqual(self.evaluate()["current_decision"]["evidence_snapshot"], snapshot)
+
+    def test_snapshot_preserves_original_canonical_identity_after_merge(self):
+        a = self.fresh_candidate()
+        snapshot = self.decide(a).json()["evidence_snapshot"]
+        b = self.candidate(.5)
+        self.db.add(EntityMerge(source_entity_id=a.candidate_entity_id, target_entity_id=b.candidate_entity_id))
+        self.db.commit()
+        result = self.evaluate()
+        self.assertEqual(result["top_candidate"]["canonical_entity_id"], str(b.candidate_entity_id))
+        self.assertEqual(result["current_decision"]["evidence_snapshot"], snapshot)
+        self.assertEqual(snapshot["candidate"]["canonical_entity_id"], str(a.candidate_entity_id))
+
+    def test_no_candidate_decision_still_captures_source(self):
+        response = self.decide(None, status="unresolved")
+        self.assertEqual(response.status_code, 201)
+        snapshot = response.json()["evidence_snapshot"]
+        self.assertIsNone(snapshot["candidate"])
+        self.assertEqual(snapshot["source"]["raw_data"], self.source.raw_data)
+
+    def test_legacy_decision_snapshot_remains_null(self):
+        decision = ReconciliationDecision(source_record_id=self.source.id, status="unresolved", origin="manual")
+        self.db.add(decision)
+        self.db.commit()
+        self.assertIsNone(self.evaluate()["current_decision"]["evidence_snapshot"])
+
+    def test_snapshot_is_deep_copy_of_nested_evidence(self):
+        from app.services.reconciliation_snapshot import capture_decision_snapshot
+        candidate = self.fresh_candidate()
+        decision = ReconciliationDecision(status="accepted", origin="manual")
+        snapshot = capture_decision_snapshot(self.db, self.source, candidate, decision)
+        candidate.evidence["field_comparisons"]["language"]["source_value"] = "changed"
+        self.source.raw_data["title"] = "changed"
+        self.assertEqual(snapshot["candidate"]["evidence"]["field_comparisons"]["language"]["source_value"], "tr")
+        self.assertEqual(snapshot["source"]["raw_data"]["title"], "Bilgi Yönetimi Giriş")
+
+
 
 if __name__ == '__main__':
     unittest.main()
