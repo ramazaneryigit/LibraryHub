@@ -15,6 +15,7 @@ from ..models import (
 )
 from ..services.entity_merge import resolve_canonical_entity_id
 from ..services.reconciliation import generate_work_candidates
+from ..services.reconciliation_policy import evaluate_work_reconciliation
 
 class ReconciliationDecisionCreate(BaseModel):
     candidate_id: uuid.UUID | None = None
@@ -50,6 +51,19 @@ router = APIRouter(
     prefix="/reconciliation",
     tags=["reconciliation"],
 )
+
+
+@router.get("/source-records/{source_record_id}/evaluation")
+def evaluate_reconciliation(
+    source_record_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    source_record = db.get(SourceRecord, source_record_id)
+    if source_record is None:
+        raise HTTPException(status_code=404, detail="Source record not found")
+    if source_record.record_type != "work":
+        raise HTTPException(status_code=400, detail="Policy evaluation supports only work records")
+    return evaluate_work_reconciliation(db, source_record)
 
 
 @router.get("/source-records/{source_record_id}")
