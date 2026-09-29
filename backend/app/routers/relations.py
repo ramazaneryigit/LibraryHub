@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Entity, EntityRelation
+from ..services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(
@@ -124,7 +125,12 @@ def list_entity_relations(
 ):
     """Entity ile ilişkili tüm ilişkileri listeler (gelen ve giden)."""
 
-    entity = db.get(Entity, entity_id)
+    canonical_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=entity_id,
+    )
+
+    entity = db.get(Entity, canonical_entity_id)
 
     if entity is None:
         raise HTTPException(
@@ -134,14 +140,13 @@ def list_entity_relations(
 
     relations = build_entity_relations(
         db,
-        entity_id,
+        canonical_entity_id,
     )
 
     return {
-        "entity_id": str(entity_id),
+        "entity_id": str(canonical_entity_id),
         "relations": relations,
     }
-
 
 @router.post("/{entity_id}", status_code=201)
 def create_entity_relation(
@@ -151,8 +156,20 @@ def create_entity_relation(
 ):
     """Entity'ler arasında yeni bir ilişki oluşturur ve tüm ilişkileri döndürür."""
 
-    # 1. Subject entity var mı?
-    subject = db.get(Entity, entity_id)
+    canonical_subject_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=entity_id,
+    )
+
+    canonical_object_entity_id = resolve_canonical_entity_id(
+        db=db,
+        entity_id=payload.object_entity_id,
+    )
+
+    subject = db.get(
+        Entity,
+        canonical_subject_entity_id,
+    )
 
     if subject is None:
         raise HTTPException(
@@ -160,10 +177,9 @@ def create_entity_relation(
             detail="Subject entity not found",
         )
 
-    # 2. Object entity var mı?
     object_entity = db.get(
         Entity,
-        payload.object_entity_id,
+        canonical_object_entity_id,
     )
 
     if object_entity is None:
@@ -172,10 +188,8 @@ def create_entity_relation(
             detail="Object entity not found",
         )
 
-    # 3. Predicate'i normalize et
     predicate = payload.predicate.strip()
 
-    # 4. Predicate tanımlı mı?
     definition = get_relation_definition(
         db,
         predicate,
@@ -187,7 +201,6 @@ def create_entity_relation(
             detail=f"Unknown relation predicate: {predicate}",
         )
 
-    # 5. Predicate için subject/object type kısıtları var mı?
     constraint_count = db.execute(
         text("""
             SELECT COUNT(*)
@@ -226,11 +239,10 @@ def create_entity_relation(
                 ),
             )
 
-    # 6. İlişkiyi oluştur
     relation = EntityRelation(
-        subject_entity_id=entity_id,
+        subject_entity_id=canonical_subject_entity_id,
         predicate=predicate,
-        object_entity_id=payload.object_entity_id,
+        object_entity_id=canonical_object_entity_id,
     )
 
     try:
@@ -245,13 +257,12 @@ def create_entity_relation(
             detail="This entity relation already exists",
         )
 
-    # 7. Entity'nin bütün ilişkilerini getir
     relations = build_entity_relations(
         db,
-        entity_id,
+        canonical_subject_entity_id,
     )
 
     return {
-        "entity_id": str(entity_id),
+        "entity_id": str(canonical_subject_entity_id),
         "relations": relations,
     }
