@@ -1,11 +1,12 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services.ingestion import (
+    ingest_jsonl_stream,
     ingest_source_records,
 )
 
@@ -47,3 +48,34 @@ def ingest_records(
         source_system=payload.source_system,
         records=records,
     )
+    
+@router.post("/jsonl")
+def ingest_jsonl_file(
+    source_system: str = Form(...),
+    batch_size: int = Form(500),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    if batch_size < 1 or batch_size > 10000:
+        raise HTTPException(
+            status_code=400,
+            detail="batch_size must be between 1 and 10000",
+        )
+
+    filename = file.filename or ""
+
+    if not filename.lower().endswith(".jsonl"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only .jsonl files are supported",
+        )
+
+    try:
+        return ingest_jsonl_stream(
+            db=db,
+            source_system=source_system,
+            stream=file.file,
+            batch_size=batch_size,
+        )
+    finally:
+        file.file.close()
