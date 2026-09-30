@@ -2083,6 +2083,67 @@ bilerek bastırmış bir kurumun kararı korunur.
 
 ---
 
+### 0.30 Arayüz tasarım sistemi
+
+#### Neden Bootstrap CDN değil
+
+İstek "Bootstrap özelliği" idi ve Bootstrap'ın **tasarım dili** kullanıldı: ölçek,
+gölge katmanları, yuvarlaklık ölçeği, odak halkası, responsive kırılımlar, segmentli
+sekmeler, rozet varyantları. **Kendisi bir bağımlılık olarak eklenmedi.**
+
+Gerekçe: bu arayüz bir Docker ağında ve çoğu zaman internetsiz çalışır. Bir CDN
+erişilemezse sayfa **stilsiz** kalır — bir kütüphane kataloğu için kabul edilemez.
+Ayrıca Bootstrap'ın sınıf adları 149 mevcut seçicinin tamamının yeniden yazılmasını
+gerektirirdi ve `app.js`'e hiç dokunulmaması bu işin en değerli kısıtıydı.
+
+Sonuç: `style.css` 8.8 → **18.6 KB**, `admin.css` 6.2 → **11.9 KB**, ve **tek bir
+sınıf adı değişmedi** — yani JavaScript hiç etkilenmedi.
+
+#### Ne değişti
+
+| | |
+|---|---|
+| Renk | tek lacivert yerine 9 kademeli rampa, sıcak nötr yüzeyler, durum renkleri |
+| Jetonlar | yarıçap (6/10/14/20), gölge (xs–lg), odak halkası, `--container` |
+| Hero | gradyan + ince ızgara deseni, cam efektli arama kutusu, hap örnekler |
+| Kartlar | yumuşak gölge, hover'da hafif yükselme, kenarlık geçişi |
+| Sonuç | "ESER" çipi, hap etiketler, **"5 nüsha · 3 baskı · 3 kütüphane"** çipi |
+| Detay | üst aksanlı hero kartı, dil rozetleri, sol aksanlı yayın blokları |
+| Panel | segmentli hap sekmeler, araç çubuğu kartı, kart liste öğeleri, dolu `admin` rozeti |
+| Erişilebilirlik | `:focus-visible` halkaları, `prefers-reduced-motion`, kontrast |
+| Responsive | 860px ve 560px kırılımları, taşma yerine sarma |
+
+#### Bir yanılgı, ve onu çözen şey
+
+Dar ekran görüntüsünde içerik **kesilmiş** görünüyordu ve ben bunu yatay taşma
+sandım; sarma kuralları ekledim. Sonra **ölçtüm** — aynı kaynaklı bir kokpiti
+sayfayı bir `iframe` içinde 360px'e koyup `scrollWidth` ile taşan öğeleri
+raporluyordu:
+
+```
+clientWidth=345  scrollWidth=345
+--- taşanlar ---
+(yok)
+```
+
+**Taşma yoktu.** Kesilme, headless tarayıcının küçük pencerede düzeni daraltmamasından
+gelen bir kırpmaydı. Eklenen sarma kuralları yine de doğru bir savunma; ama teşhis
+yanlıştı ve bunu ancak ölçüm düzeltti.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **123/123** |
+| Senaryo kontrolleri | **37/37** |
+| `alembic check` | temiz, tek head `e2a7c3d58b61` |
+| `app.js` / `admin.js` | **değişmedi** — sınıf adları korundu |
+| Arama, detay, panel (öneriler/personel/kurumlar) | gerçek tarayıcıda çizildi |
+| Dar ekran (345px) | taşma **0**, her şey sarıyor |
+| Tüm yüzey | `/`, `/admin`, `/static/*`, `/health`, `/search`, `/openapi.json` → 200 |
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman

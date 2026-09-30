@@ -1,5 +1,9 @@
-/* Yönetim arayüzü. style.css'in değişkenlerini ve genel görünümünü kullanır;
-   burada yalnızca panelin kendine özgü yerleşimi var. */
+/* ==========================================================================
+   LibraryHub · yönetim paneli
+
+   style.css'in tasarım jetonlarını ve genel görünümünü kullanır; burada yalnızca
+   panele özgü yerleşim var. İki dosya birlikte yükleniyor.
+   ========================================================================== */
 
 /* `hidden` özniteliği tarayıcının `[hidden] { display: none }` kuralıyla
    çalışır ve o kuralın özgüllüğü çok düşüktür: aşağıdaki `.stack { display:
@@ -10,218 +14,296 @@
 }
 
 .admin-main {
-    max-width: 1200px;
+    max-width: var(--container);
     margin: 0 auto;
-    padding: 28px 32px 60px;
+    padding: 30px 32px 72px;
 }
 
 .session {
     margin-left: auto;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     font-size: 14px;
-    color: var(--muted);
+    color: var(--text-muted);
 }
 
 .session strong {
     color: var(--text);
+    font-weight: 600;
 }
 
-/* --------------------------------------------------------------- giriş */
+/* ------------------------------------------------------------------- giriş */
 
 .login-card {
     max-width: 420px;
-    margin: 60px auto;
+    margin: 64px auto;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 28px;
+    border-radius: var(--radius-lg);
+    padding: 32px;
+    box-shadow: var(--shadow-lg);
+    border-top: 4px solid var(--primary-700);
 }
 
 .login-card h2 {
-    margin-top: 0;
+    margin: 0 0 10px;
+    font-size: 23px;
+    color: var(--primary-800);
 }
 
-/* ---------------------------------------------------------------- panel */
+/* ------------------------------------------------------------------ sekmeler */
 
 .tabs {
     display: flex;
-    gap: 8px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 20px;
+    gap: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    padding: 5px;
+    margin-bottom: 22px;
+    width: fit-content;
+    box-shadow: var(--shadow-xs);
 }
 
 .tab {
+    padding: 9px 22px;
+    font-family: inherit;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--text-muted);
     background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    padding: 10px 14px;
-    font-size: 15px;
-    color: var(--muted);
+    border: 0;
+    border-radius: var(--radius-pill);
     cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
 }
 
 .tab:hover {
-    color: var(--primary-light);
+    color: var(--primary-700);
+    background: var(--primary-50);
 }
 
 .tab.active {
-    color: var(--primary);
-    border-bottom-color: var(--primary);
-    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(145deg, var(--primary-700), var(--primary-900));
+    box-shadow: var(--shadow-sm);
 }
+
+/* ---------------------------------------------------------------- araç çubuğu */
 
 .toolbar {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
     gap: 12px;
-    margin-bottom: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow-xs);
 }
 
 .toolbar label {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    font-size: 13px;
-    color: var(--muted);
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-subtle);
 }
 
 .toolbar select,
 .toolbar input {
-    padding: 7px 10px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    padding: 9px 12px;
+    font-family: inherit;
     font-size: 14px;
-    background: var(--surface);
     color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
+.toolbar select:focus,
+.toolbar input:focus {
+    outline: none;
+    border-color: var(--primary-400);
+    box-shadow: var(--ring);
+}
+
+/* ------------------------------------------------------------------ düğmeler */
+
 button {
-    padding: 8px 14px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    color: var(--text);
+    padding: 9px 18px;
+    font-family: inherit;
     font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
     cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease,
+        color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
 }
 
 button:hover {
-    border-color: var(--primary-light);
-    color: var(--primary-light);
+    border-color: var(--primary-400);
+    color: var(--primary-700);
+    background: var(--primary-50);
+}
+
+button:active {
+    transform: translateY(1px);
 }
 
 button.primary {
-    background: var(--primary);
-    border-color: var(--primary);
     color: #fff;
+    background: linear-gradient(145deg, var(--primary-600), var(--primary-800));
+    border-color: var(--primary-800);
+    box-shadow: var(--shadow-sm);
 }
 
 button.primary:hover {
-    background: var(--primary-light);
     color: #fff;
+    background: linear-gradient(145deg, var(--primary-500), var(--primary-700));
+    filter: brightness(1.06);
 }
 
 button.danger:hover {
-    border-color: #b91c1c;
-    color: #b91c1c;
+    color: var(--danger);
+    background: var(--danger-bg);
+    border-color: #e8a9a4;
 }
 
 button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    transform: none;
 }
 
+/* --------------------------------------------------------------------- metin */
+
 .note {
-    font-size: 13px;
-    line-height: 1.6;
+    font-size: 13.5px;
+    line-height: 1.7;
+    color: var(--text-muted);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--primary-400);
+    border-radius: var(--radius);
+    padding: 11px 15px;
+    margin: 0 0 16px;
 }
 
 .muted {
-    color: var(--muted);
+    color: var(--text-muted);
 }
 
 code {
-    background: var(--background);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1px 5px;
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--primary-700);
+    background: var(--primary-50);
+    border: 1px solid var(--primary-100);
+    border-radius: var(--radius-sm);
+    padding: 1px 6px;
 }
 
-/* -------------------------------------------------------------- kartlar */
+/* ------------------------------------------------------------------- formlar */
 
 .stack {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
 }
 
 .stack label {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    font-size: 13px;
-    color: var(--muted);
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-subtle);
 }
 
 .stack input,
 .stack select {
-    padding: 9px 11px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    font-size: 14px;
-    background: var(--surface);
+    padding: 11px 13px;
+    font-family: inherit;
+    font-size: 14.5px;
     color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.stack input:focus,
+.stack select:focus {
+    outline: none;
+    border-color: var(--primary-400);
+    box-shadow: var(--ring);
 }
 
 .card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px;
+    border-radius: var(--radius-lg);
+    padding: 22px;
     margin-bottom: 16px;
+    box-shadow: var(--shadow-sm);
 }
 
 .card h3 {
-    margin: 0;
-    font-size: 16px;
+    margin: 0 0 4px;
+    font-size: 17px;
+    color: var(--primary-800);
 }
 
 .row {
     display: flex;
     gap: 10px;
     align-items: center;
+    flex-wrap: wrap;
 }
 
-/* -------------------------------------------------------------- listeler */
+/* ------------------------------------------------------------------ listeler */
 
 .list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 9px;
 }
 
 .item {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px 16px;
+    border-radius: var(--radius);
+    padding: 14px 18px;
     display: flex;
     align-items: center;
     gap: 14px;
-    cursor: pointer;
+    box-shadow: var(--shadow-xs);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease,
+        transform 0.15s ease;
 }
 
 .item:hover {
-    border-color: var(--primary-light);
+    border-color: var(--primary-400);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
 }
 
 .item.selected {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 2px rgba(32, 99, 155, 0.14);
+    border-color: var(--primary-600);
+    box-shadow: var(--ring);
 }
 
 .item .grow {
@@ -238,56 +320,100 @@ code {
 
 .item .sub {
     font-size: 13px;
-    color: var(--muted);
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
+/* ------------------------------------------------------------------- rozetler */
+
 .badge {
     display: inline-block;
-    padding: 3px 9px;
-    border-radius: 999px;
+    padding: 3px 11px;
     font-size: 12px;
-    border: 1px solid var(--border);
-    background: var(--background);
-    color: var(--muted);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-muted);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-pill);
     white-space: nowrap;
 }
 
-.badge.pending { border-color: #f59e0b; color: #b45309; }
-.badge.accepted { border-color: #2563eb; color: #1d4ed8; }
-.badge.applied { border-color: #15803d; color: #15803d; }
-.badge.rejected { border-color: #b91c1c; color: #b91c1c; }
-.badge.withdrawn { border-color: var(--border); }
-.badge.admin { border-color: var(--primary); color: var(--primary); }
-.badge.inactive { border-color: #b91c1c; color: #b91c1c; }
+.badge.pending {
+    color: var(--warning);
+    background: var(--warning-bg);
+    border-color: #f0d5a8;
+}
 
-/* --------------------------------------------------------------- detay */
+.badge.accepted {
+    color: var(--primary-700);
+    background: var(--primary-50);
+    border-color: var(--primary-100);
+}
+
+.badge.applied {
+    color: var(--success);
+    background: var(--success-bg);
+    border-color: #bfe3d0;
+}
+
+.badge.rejected {
+    color: var(--danger);
+    background: var(--danger-bg);
+    border-color: #f3c9c6;
+}
+
+.badge.withdrawn {
+    color: var(--text-subtle);
+    background: var(--surface-2);
+}
+
+.badge.admin {
+    color: #fff;
+    background: var(--primary-700);
+    border-color: var(--primary-800);
+}
+
+.badge.inactive {
+    color: var(--danger);
+    background: var(--danger-bg);
+    border-color: #f3c9c6;
+}
+
+/* -------------------------------------------------------------------- detay */
 
 .detail {
     background: var(--surface);
-    border: 1px solid var(--primary-light);
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 16px;
+    border: 1px solid var(--primary-400);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow-md);
 }
 
 .detail h3 {
-    margin-top: 0;
+    margin: 0 0 16px;
+    font-size: 19px;
+    color: var(--primary-800);
 }
 
 .detail dl {
     display: grid;
-    grid-template-columns: 160px 1fr;
-    gap: 6px 14px;
-    margin: 0 0 14px;
-    font-size: 14px;
+    grid-template-columns: 150px 1fr;
+    gap: 8px 16px;
+    margin: 0 0 18px;
+    font-size: 14.5px;
 }
 
 .detail dt {
-    color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-subtle);
+    padding-top: 2px;
 }
 
 .detail dd {
@@ -295,38 +421,55 @@ code {
     word-break: break-word;
 }
 
+/* -------------------------------------------------------- değişiklik tablosu */
+
 table.changes {
     width: 100%;
-    border-collapse: collapse;
-    font-size: 14px;
-    margin-bottom: 14px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 14.5px;
+    margin-bottom: 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
 }
 
 table.changes th,
 table.changes td {
     text-align: left;
-    padding: 7px 10px;
+    padding: 10px 14px;
     border-bottom: 1px solid var(--border);
     vertical-align: top;
 }
 
+table.changes tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+table.changes tbody tr:hover td {
+    background: var(--surface-2);
+}
+
 table.changes th {
-    font-size: 12px;
-    color: var(--muted);
-    font-weight: 600;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    color: var(--text-subtle);
+    background: var(--surface-2);
 }
 
 table.changes td.was {
-    color: var(--muted);
+    color: var(--text-subtle);
     text-decoration: line-through;
 }
 
 table.changes td.now {
-    color: #15803d;
+    color: var(--success);
     font-weight: 600;
 }
+
+/* ----------------------------------------------------------------- eylemler */
 
 .detail .actions {
     display: flex;
@@ -334,23 +477,101 @@ table.changes td.now {
     gap: 10px;
     align-items: center;
     border-top: 1px solid var(--border);
-    padding-top: 14px;
+    padding-top: 16px;
 }
 
 .detail .actions input {
     flex: 1;
     min-width: 220px;
-    padding: 8px 11px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    padding: 10px 13px;
+    font-family: inherit;
     font-size: 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
 }
+
+.detail .actions input:focus {
+    outline: none;
+    border-color: var(--primary-400);
+    box-shadow: var(--ring);
+}
+
+/* ------------------------------------------------------------------ sonuçlar */
 
 .result-line {
-    font-size: 13px;
-    margin-top: 10px;
+    font-size: 13.5px;
+    margin-top: 12px;
+    padding: 9px 13px;
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
 }
 
-.result-line.ok { color: #15803d; }
-.result-line.warn { color: #b45309; }
-.result-line.bad { color: #b91c1c; }
+.result-line:empty {
+    display: none;
+}
+
+.result-line.ok {
+    color: var(--success);
+    background: var(--success-bg);
+    border-color: #bfe3d0;
+}
+
+.result-line.warn {
+    color: var(--warning);
+    background: var(--warning-bg);
+    border-color: #f0d5a8;
+}
+
+.result-line.bad {
+    color: var(--danger);
+    background: var(--danger-bg);
+    border-color: #f3c9c6;
+}
+
+/* -------------------------------------------------------------- responsive */
+
+@media (max-width: 860px) {
+    .admin-main {
+        padding: 22px 20px 60px;
+    }
+
+    .topbar {
+        padding: 12px 20px;
+    }
+
+    .session {
+        font-size: 13px;
+    }
+
+    .detail dl {
+        grid-template-columns: 1fr;
+        gap: 2px 0;
+    }
+
+    .detail dt {
+        margin-top: 8px;
+    }
+
+    .login-card {
+        margin: 32px auto;
+        padding: 24px;
+    }
+}
+
+@media (max-width: 560px) {
+    .tabs {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .tab {
+        flex: 1;
+        padding: 9px 10px;
+        font-size: 13.5px;
+    }
+
+    .session strong {
+        display: none;
+    }
+}
