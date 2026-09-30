@@ -1077,6 +1077,89 @@ kimliği sanıp geçersiz UUID gönderdim; ve bir önceki turda olduğu gibi iç
 
 ---
 
+### 0.17 Legacy item yazma yolu kapatıldı — TAMAMLANDI
+
+Aşama 6'nın önündeki son ölçülmüş engel buydu ve kapandı. `POST /items` ile
+`POST /items/{item_id}/agents` emekliye ayrıldı; iki router dosyası silindi.
+
+#### Yazma yolu biterken okuma yolu da çıktı
+
+`POST /items`'ı kaldırmak yetmiyor: **bir rota tablosundan uzun yaşayamaz.** Tripwire'ı
+"yazan uç kaldı mı" sorusundan "legacy tabloya dokunan kod kaldı mı" sorusuna genişlettim
+ve tarama **grep'le gözden kaçırdığım üç yeri** buldu:
+
+| Yer | Ne yapıyordu | Yeni hâli |
+|---|---|---|
+| `routers/search.py` | `manifestation_item` + `items` + item tanımlayıcıları | `public.items_compat` |
+| `routers/collective_agents.py` | `item_agent_relation` → `manifestation_item` dalı | `items_compat.holding_institution_entity_id` |
+| `routers/persons.py` | kişi birleştirmede item-agent ilişkilerini **taşıyıp siliyordu** | kaldırıldı |
+
+`persons.py` bulgusu ilginç: o rutin, birleşen kişinin item-agent ilişkilerini hedefe
+taşıyıp kaynaktan siliyordu. Ama `item_agent_relation` **yalnızca kurumsal aidiyet** tutar —
+her satır `holding_institution` rolünde bir ORGANIZATION — ve **hiçbiri PERSON değil**
+(kaldırmadan önce ölçtüm: 0). Yani kişi birleştirmesi için orada taşınacak bir şey yoktu;
+çalıştığı için fark edilmeyen ölü koddur.
+
+#### Tripwire'ın kendisi de yanlış çalıştı, bir kez
+
+İlk hâli dosyaları **düz metin** olarak tarıyordu ve bir sorguyu neden kaldırdığımı anlatan
+**yorumu** ihlal saydı. SQL her zaman bir string sabitinde yaşar; tarama `ast` ile string
+sabitlerine daraltıldı ve docstring'ler dışlandı. Yanlış alarm veren bir tripwire, insanların
+görmezden gelmeyi öğrendiği bir tripwire'dır.
+
+#### Seed script'leri tenant plane'ine taşındı
+
+`seed_diverse_catalog.py` artık **oturum açıyor** (`--email` / `--password`, ya da
+`SEED_EMAIL` / `SEED_PASSWORD`) ve nüshayı `/tenant/holdings` + `/tenant/items` üzerinden
+yazıyor. `holding_institution` parametresi tamamen kalktı: **aidiyet artık tenant'ın kendisi.**
+Kurum, kiracıdan gelir; istemciye sorulmaz.
+
+Bunun için **`GET /tenant/branches`** eklendi — bir nüsha oluşturmak şube seçmeyi gerektirir
+ve §0.15'te `control.branches`'a eklediğim politika sayesinde bu uç **`WHERE tenant_id`
+yazmadan** güvenli: bağlaması olmayan bir oturum hiçbir şey görmez.
+
+`/tenant/items` yanıtı `branch_name` ve `organization_name` kazandı — emekliye ayrılan
+`GET /items/{id}/agents`'ın verdiği aidiyet bilgisi böylece kaybolmuyor, ama artık **yapıdan
+türetiliyor**, ilişki tablosundan okunmuyor.
+
+#### Kanıt
+
+| Kontrol | Sonuç |
+|---|---|
+| `/openapi.json`'da `/items*` | **yok** (52 path kaldı) |
+| Tripwire: global item yazan uç | **temiz** |
+| Tripwire: legacy item tablosuna dokunan kod | **temiz** |
+| Seed ile nüsha oluşturma | tenant plane'inde oluştu, `legacy_entity_id` NULL |
+| **`public.items`'ta karşılığı** | **0** — ve `entities` sayısı **491'de sabit kaldı** |
+| Senaryo kontrolleri | **27/27** |
+| Test paketi | **88/88** |
+| `/search` barkod + `neb` katalog numaraları + başlık | **hepsi hâlâ bulunuyor** |
+
+`entities` sayısının değişmemesi işin özü: nüsha oluşturmak artık **ITEM entity üretmiyor**,
+yani Aşama 6'nın o değeri CHECK'ten çıkarmasının önünde hiçbir şey kalmıyor.
+
+#### Ölçülen iki davranış değişikliği
+
+**1. `/collective-agents/{id}/works` artık daha fazla sonuç veriyor — düzeltme.** Eski dal
+yalnızca ilişki satırı olan nüshaları buluyordu; aidiyet yapısal olduğu için artık kurumun
+tuttuğu **her** nüshayı buluyor. Kırıkkale için ölçtüm: **1 → 6 eser**.
+
+**2. `/search` yavaşladı: ~300 ms → 452 ms (ortalama, 316 eser).** Sebep ölçülü: view,
+`tenant.items`(849) × `holdings`(946) × `organizations`(105) üçlü join'ini **849 satır**
+olarak materyalize ediyor; eski yol 12 satırlık `manifestation_item` + `items` okuyordu.
+Bu, taşımanın gerçek bedeli ve tam da §9'daki Search Plane'in neden gerektiğinin yeni
+kanıtı. Aşama 6'da view'un legacy dalı (bugün **0 satır** katkı yapıyor) düşecek; o zaman
+daraltılabilir. Ayrıca view'un `control.organizations` ile `tenant_id` üzerinden join
+yapması, bir tenant'ın **birden fazla kuruluşu** olduğu gün satırları çoğaltır — bugün
+tenant başına tek kuruluş olduğu için (849 = 849) görünmüyor, kayda geçiyor.
+
+#### Aşama 6'nın durumu
+
+Ölçülen engel **kalmadı**: 27/27 kontrol geçiyor ve "Aşama 6 hazırlığı" bölümünün yedi
+maddesi de yeşil. Sıradaki iş, temizliğin kendisi — veri kaybı olmadan tabloları düşürmek.
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman
