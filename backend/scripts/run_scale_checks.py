@@ -1020,6 +1020,59 @@ def check_outbox_coverage(owner) -> None:
     )
 
 
+def check_nomen_normalization(owner) -> None:
+    """Every name with a value has a comparable form derived from it.
+
+    `nomens.normalized_value` is filled by an ORM event rather than a trigger, and
+    that is a deliberate trade. The normalization is NFKD, then casefold, then
+    combining-mark removal, then punctuation to spaces; this PostgreSQL image has
+    no `unaccent`, so doing it in plpgsql would mean a second implementation of
+    one decision -- free to disagree with the first exactly where Turkish needs it
+    most, on the dotted and dotless i that `casefold` and `lower` already treat
+    differently.
+
+    The price of that choice is this check. An event listener only covers writes
+    that go through the ORM, so a later raw-SQL insert would leave the column
+    empty and the name would quietly stop being findable by anybody who typed it
+    without the accents.
+    """
+
+    total, filled, empty = owner.execute(
+        text(
+            "select count(*), count(normalized_value), "
+            "count(*) filter (where value is not null "
+            "                   and normalized_value is null) "
+            "from public.nomens"
+        )
+    ).one()
+
+    # And the point of the column: an identical name now scores against a
+    # normalized probe the way it should. Before, PostgreSQL folded one side with
+    # `lower()` and the probe arrived fully normalized, so `Ayşe Demir` scored
+    # 0.571 against a probe of itself.
+    score = owner.execute(
+        text(
+            "select similarity(normalized_value, 'ayse demir') "
+            "from public.nomens where value = 'Ayşe Demir' limit 1"
+        )
+    ).scalar()
+
+    if score is None:
+        record(
+            "Nomen: normalize edilmis bicim dolu ve dogru",
+            empty == 0,
+            f"{filled}/{total} dolu, bos kalan {empty} (sinanacak isim yok)",
+        )
+        return
+
+    record(
+        "Nomen: normalize edilmis bicim dolu ve dogru",
+        empty == 0 and float(score) >= 0.999,
+        f"{filled}/{total} dolu, bos kalan {empty}, "
+        f"birebir ayni isim skoru {float(score):.3f}",
+    )
+
+
 def check_app_imports_resolve() -> None:
     """Every absolute `app.*` import in the source points at something real.
 
@@ -1112,6 +1165,7 @@ def main() -> int:
 
         print("\n-- kaynak tutarliligi --")
         check_app_imports_resolve()
+        check_nomen_normalization(owner)
 
         print("\n-- outbox --")
         check_outbox_same_transaction(owner)

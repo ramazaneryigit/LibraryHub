@@ -1857,6 +1857,69 @@ araç, değişiklikten sonra gerçek sayfaya bakmak.
 
 ---
 
+### 0.27 `nomens.normalized_value` — §14 ve §15.6'nın ikinci yarısı
+
+#### Belirti, ve ölçüm
+
+`works.normalized_title` (§0.6) sorunun bir yarısını çözmüştü. İsimler aynı sorunu
+taşıyordu ve çözecek kolonları yoktu: `nomens`, arama ve bloklamanın kişileri ve
+kavramları eşleştirdiği tablo, ve her karşılaştırma anahtarını uçuşta türetiyordu.
+
+Ölçüm, §15.6'nın üslubuyla:
+
+| İsim | eski skor (`lower(value)` ↔ normalize probe) | yeni skor (`normalized_value`) |
+|---|---|---|
+| `Ayşe Demir` | **0.571** | **1.000** |
+
+Yani birebir aynı isim, tek bir aksan yüzünden 1.000 yerine **0.571** alıyordu.
+Ve plan da değişti:
+
+| Sorgu | Plan |
+|---|---|
+| `normalized_value LIKE '%dostoyevski%'` | **Bitmap Index Scan** (`ix_nomens_normalized_value_trgm`) |
+| `value ILIKE '%dostoyevski%'` | **Seq Scan** |
+
+Yani düzeltme yalnızca doğru değil, **daha ucuz**.
+
+#### Neden tetikleyici değil
+
+Beklenen hamle bir tetikleyiciydi ve burada yanlış olan o. Bu imajda `unaccent`
+**yok** (ölçüldü), ve `normalize_text` `lower()` artı bir çeviri tablosu değil:
+NFKD, sonra `casefold`, sonra birleşen işaretlerin atılması, sonra noktalama→boşluk.
+Bunu plpgsql'de yeniden yazmak, tek bir kararın **ikinci bir uygulaması** olurdu —
+ve tam da en çok önemli olduğu yerde ayrışmaya açık: `casefold` ile `lower`'ın zaten
+farklı davrandığı Türkçe `İ`/`ı` çiftinde.
+
+Bu yüzden ölçülmüş olan örnek izlendi: Python'da, satır yazılırken, ORM olayıyla
+(`_sync_normalized_nomen`). Bugünkü üç yazma yolu da oradan geçiyor.
+
+#### Bunun bedeli, ve bedeli ödeyen kontrol
+
+ORM olayı **yalnızca ORM'den geçen yazmaları** kapsar. Sonradan ham SQL ile yazan
+biri kolonu boş bırakır ve o isim, aksansız yazan hiç kimse tarafından bulunamaz
+hale gelir — sessizce.
+
+`run_scale_checks.py` bu yüzden "değeri olup normalize edilmiş biçimi olmayan satır"
+sayısını sınıyor **ve** birebir aynı ismin skorunu bildiriyor; sıfır boş satır tek
+başına normalizasyonun *doğru* olduğunu göstermez.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **123/123** |
+| Senaryo kontrolleri | **36/36** (1 yeni) |
+| `alembic check` | temiz, tek head `c9e5a1b36f48` |
+| Geri doldurma | 24/24 isim normalize edildi, boş kalan **0** |
+| `Ayse Demir` araması | `Ayşe Demir` bulundu |
+| `Dostoevsky` araması | `Fyodor Dostoyevski` bulundu |
+| Noktalama probe'u (`...`, `!!!`) | **0 sonuç** — hepsini döndürmüyor |
+| Birebir aynı isim skoru | **1.000** |
+| Index kullanımı | Bitmap Index Scan (`value` üzerinde Seq Scan) |
+| Veri | `eser=16 entity=79 holding=16 nusha=12 kurum=5` — değişmedi |
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman
@@ -3080,7 +3143,7 @@ reddeder — ki bu doğru davranıştır.
    olduğu yazılmalı.
 2. `works.normalized_title` için ileride `NOT NULL` düşünülebilir; bugün nullable çünkü
    yalnızca noktalama içeren bir başlık gerçekten karşılaştırılamaz.
-3. `nomens` için aynı normalizasyon (`normalized_value`) hâlâ yapılmadı — §14.
+3. `nomens` için aynı normalizasyon (`normalized_value`) **yapıldı** — §0.27.
 4. `public.items`, `manifestation_item` ve `item_agent_relation` Aşama 6'ya kadar
    **silinmez**; `entities.entity_type` CHECK'inden `'ITEM'` çıkarmak da Aşama 6'nın işidir.
 5. ✅ **`unassigned` kuyruğu kapatıldı** (§0.10) — 7 nüsha kurumlarına bağlandı, tenant 0'a

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from ....core.text import normalize_text
 from ....db import get_db
 from ....db.models import Concept
 from ....services.work_detail import build_work_detail
@@ -134,7 +135,22 @@ def search(
             ),
         )
 
-    search_term = f"%{q.strip()}%"
+    probe = q.strip()
+    search_term = f"%{probe}%"
+
+    # Names are matched against `nomens.normalized_value`, not `value`.
+    #
+    # §14: a reader who types `Ayse` should find `Ayşe`, and the person stored as
+    # `Dostoyevski, Fyodor` should be found by `Dostoyevski`. Both sides go
+    # through `normalize_text`, so the comparison is like with like -- which is
+    # the whole reason the column exists. It is also GIN-trigram indexed, so this
+    # is the cheaper of the two conditions, not the more expensive.
+    #
+    # `normalize_text` returns None for a probe with nothing comparable left in
+    # it; `LIKE NULL` is NULL, which is not true, so such a probe simply matches
+    # no names rather than all of them.
+    normalized_probe = normalize_text(probe)
+    normalized_term = f"%{normalized_probe}%" if normalized_probe else None
 
     query = """
     SELECT DISTINCT
@@ -237,13 +253,13 @@ def search(
         OR w.original_title ILIKE :search_term
         OR work_identifier.value ILIKE :search_term
         OR work_person.canonical_name ILIKE :search_term
-        OR work_person_nomen.value ILIKE :search_term
+        OR work_person_nomen.normalized_value LIKE :normalized_term
         OR work_person_identifier.value ILIKE :search_term
         OR concept.preferred_label ILIKE :search_term
         OR expression.language ILIKE :search_term
         OR expression_identifier.value ILIKE :search_term
         OR expression_person.canonical_name ILIKE :search_term
-        OR expression_person_nomen.value ILIKE :search_term
+        OR expression_person_nomen.normalized_value LIKE :normalized_term
         OR expression_person_identifier.value ILIKE :search_term
         OR manifestation.publication_statement ILIKE :search_term
         OR manifestation.publication_date ILIKE :search_term
@@ -261,7 +277,11 @@ def search(
 
     rows = db.execute(
         text(query),
-        {"search_term": search_term, "limit": limit},
+        {
+            "search_term": search_term,
+            "normalized_term": normalized_term,
+            "limit": limit,
+        },
     ).mappings().all()
 
     results = []

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..base import Base, utcnow
 from ...core.ids import uuid7
+from ...core.text import normalize_text
 
 
 __all__ = ["EntityMerge", "Entity", "Identifier", "Nomen"]
@@ -231,6 +232,13 @@ class Nomen(Base):
             unique=True,
             postgresql_where=text("preferred = true"),
         ),
+        # Declared with text() so Alembic can see this expression index. The index
+        # itself is created by migration c9e5a1b36f48 using raw SQL.
+        Index(
+            "ix_nomens_normalized_value_trgm",
+            text("normalized_value gin_trgm_ops"),
+            postgresql_using="gin",
+        ).ddl_if(dialect="postgresql"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -246,6 +254,22 @@ class Nomen(Base):
     value: Mapped[str] = mapped_column(
         String(1000),
         nullable=False,
+    )
+
+    # The comparable form of `value`, and the column blocking searches on.
+    #
+    # §14 and §15.6: matching used to normalize the two sides differently --
+    # PostgreSQL `lower()` on the stored side, the full `normalize_text` on the
+    # probe side -- and for Turkish that is systematic damage. An identical title
+    # scored 0.714 instead of 1.000, and against a 0.30 threshold a short,
+    # accent-dense name could fall under it and never match at all.
+    #
+    # This is the same decision `works.normalized_title` already carries, applied
+    # to names. Filled by the listener at the bottom of this module, so every
+    # write path is covered rather than the three that exist today.
+    normalized_value: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
     )
 
     language: Mapped[str | None] = mapped_column(
@@ -268,3 +292,17 @@ class Nomen(Base):
         default=False,
         nullable=False,
     )
+
+
+@event.listens_for(Nomen, "before_insert")
+@event.listens_for(Nomen, "before_update")
+def _sync_normalized_nomen(mapper, connection, target) -> None:
+    """Keep `nomens.normalized_value` derived from `value`.
+
+    Hanging this off the model instead of the routers covers every write path --
+    the three that write names today, the seed scripts, ingestion, and anything
+    added later -- so the column cannot silently drift from the name it is
+    derived from. `run_scale_checks.py` asserts that it has not.
+    """
+
+    target.normalized_value = normalize_text(target.value)
