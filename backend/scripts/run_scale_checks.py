@@ -279,6 +279,73 @@ def check_manifestation_reach(owner) -> None:
     )
 
 
+def check_tenant_role_jail(app) -> None:
+    """A tenant-scoped transaction cannot touch the global plane.
+
+    This is the guarantee behind "kendi verilerini yapımızı bozmadan", and it is
+    a grant rather than a convention: `tenant_session` drops to
+    `libraryhub_tenant_app`, which holds SELECT and nothing else on `public` and
+    on `control`. A future endpoint that forgets itself is refused by PostgreSQL
+    instead of quietly rewriting the shared bibliographic record.
+    """
+
+    attempts = (
+        (
+            "INSERT",
+            "insert into public.works (entity_id, canonical_title) "
+            "values (gen_random_uuid(), 'kacak kayit')",
+        ),
+        (
+            "UPDATE",
+            "update public.works set canonical_title = 'degistirildi'",
+        ),
+        (
+            "DELETE",
+            "delete from public.works",
+        ),
+        (
+            "INSERT (control.users)",
+            "insert into control.users "
+            "(id, tenant_id, email, display_name, password_hash, role, "
+            "account_kind, is_active, created_at, updated_at) "
+            "select gen_random_uuid(), id, 'kacak@ornek.org', 'x', 'y', "
+            "'admin', 'institutional', true, now(), now() "
+            "from control.tenants limit 1",
+        ),
+        (
+            "DELETE (control.sessions)",
+            "delete from control.sessions",
+        ),
+    )
+
+    for label, statement in attempts:
+        try:
+            # `SET LOCAL` lives until the end of the transaction, so rolling back
+            # after each attempt both cleans up a partially applied statement and
+            # drops the role again.
+            app.execute(text("set local role libraryhub_tenant_app"))
+            app.execute(text(statement))
+            app.rollback()
+
+            record(
+                f"Tenant rolu global plane'de {label} yapamaz",
+                False,
+                "IZIN VERILDI",
+            )
+
+        except Exception as exc:
+            app.rollback()
+
+            message = str(exc).strip().splitlines()[0][:90]
+
+            record(
+                f"Tenant rolu global plane'de {label} yapamaz",
+                "permission denied" in message.lower()
+                or "yetki" in message.lower(),
+                message,
+            )
+
+
 def main() -> int:
     owner_engine = create_engine(OWNER_URL)
     app_engine = create_engine(APP_URL)
@@ -300,6 +367,9 @@ def main() -> int:
 
         print("\n-- mimari sorusu --")
         check_manifestation_reach(owner)
+
+        print("\n-- yazma siniri --")
+        check_tenant_role_jail(app)
 
     failed = [name for name, passed, _ in results if not passed]
     print()
