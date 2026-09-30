@@ -1,10 +1,9 @@
-from uuid import uuid4
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..ids import uuid7
 from ..models import Concept, Entity
 
 
@@ -22,7 +21,7 @@ def create_concept(
     payload: ConceptCreate,
     db: Session = Depends(get_db),
 ):
-    entity_id = uuid4()
+    entity_id = uuid7()
 
     entity = Entity(
         id=entity_id,

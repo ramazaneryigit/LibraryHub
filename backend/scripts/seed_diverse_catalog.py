@@ -107,6 +107,7 @@ def create_item(
     manifestation_id,
     barcode,
     shelfmark,
+    holding_institution_id=None,
 ):
     result = request(
         "POST",
@@ -121,7 +122,20 @@ def create_item(
         },
     )
 
-    return result["entity_id"]
+    item_id = result["entity_id"]
+
+    # Custody must be recorded explicitly. Previously this helper never did, so
+    # every seeded item was institution-less and the item migration had nowhere
+    # honest to place it -- it landed in the `unassigned` tenant
+    # (docs/architecture-v2.md §0.9).
+    if holding_institution_id is not None:
+        add_item_agent(
+            item_id,
+            holding_institution_id,
+            "holding_institution",
+        )
+
+    return item_id
 
 
 def create_person(
@@ -185,6 +199,17 @@ def add_work_agent(work_id, agent_id, role):
     )
 
 
+def add_item_agent(item_id, agent_id, role):
+    return request(
+        "POST",
+        f"/items/{item_id}/agents",
+        {
+            "agent_entity_id": agent_id,
+            "role": role,
+        },
+    )
+
+
 def add_subject(work_id, concept_id):
     return request(
         "POST",
@@ -228,6 +253,7 @@ def create_complete_record(
     identifier_scheme="local",
     extent=None,
     carrier_type="kitap",
+    holding_institution_id=None,
 ):
     print(f"\nOluşturuluyor: {title}")
 
@@ -273,6 +299,7 @@ def create_complete_record(
         manifestation_id,
         barcode,
         shelfmark,
+        holding_institution_id=holding_institution_id,
     )
 
     add_identifier(
@@ -293,6 +320,14 @@ def create_complete_record(
 def main():
     print("LibraryHub çeşitli katalog seed işlemi başlıyor.")
 
+    # The KKU-* fixtures belong to Kırıkkale Üniversitesi. Created once here and
+    # passed down, so every seeded copy records its custody instead of ending up
+    # unattributed.
+    kku_institution_id = create_collective_agent(
+        "Kırıkkale Üniversitesi",
+        agent_type="university",
+    )
+
     create_complete_record(
         title="Bilgi Yönetimine Giriş",
         work_type="textbook",
@@ -305,6 +340,7 @@ def main():
         identifier="9780000000001",
         identifier_scheme="isbn",
         extent="320 sayfa",
+        holding_institution_id=kku_institution_id,
     )
 
     create_complete_record(
@@ -319,6 +355,7 @@ def main():
         identifier="9780000000002",
         identifier_scheme="isbn",
         extent="96 sayfa",
+        holding_institution_id=kku_institution_id,
     )
 
     create_complete_record(
@@ -334,6 +371,7 @@ def main():
         identifier_scheme="local",
         extent="185 yaprak",
         carrier_type="tez",
+        holding_institution_id=kku_institution_id,
     )
 
     #
@@ -388,6 +426,7 @@ def main():
         manifestation_id,
         "KKU-ANSIKLOPEDI-SET-0001",
         "DR440 I75",
+        holding_institution_id=kku_institution_id,
     )
 
     add_identifier(

@@ -1,4 +1,4 @@
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -6,6 +6,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..ids import uuid7
 from ..models import Entity, Identifier, Nomen, Person
 from ..services.entity_merge import (
     create_entity_merge,
@@ -113,7 +114,7 @@ def create_person(
             },
         )
 
-    entity_id = uuid4()
+    entity_id = uuid7()
 
     entity = Entity(
         id=entity_id,
@@ -129,7 +130,7 @@ def create_person(
     )
 
     primary_nomen = Nomen(
-        id=uuid4(),
+        id=uuid7(),
         entity_id=entity_id,
         value=payload.canonical_name,
         preferred=True,
@@ -268,7 +269,7 @@ def create_nomen(
         )
 
     nomen = Nomen(
-        id=uuid4(),
+        id=uuid7(),
         entity_id=canonical_entity_id,
         value=payload.value,
         language=payload.language,
@@ -572,7 +573,7 @@ def merge_persons(
                 continue
 
             new_identifier = Identifier(
-                id=uuid4(),
+                id=uuid7(),
                 entity_id=target_person_id,
                 scheme=source_identifier.scheme,
                 value=source_identifier.value,
@@ -610,7 +611,7 @@ def merge_persons(
                 continue
 
             new_nomen = Nomen(
-                id=uuid4(),
+                id=uuid7(),
                 entity_id=target_person_id,
                 value=source_nomen.value,
                 language=source_nomen.language,

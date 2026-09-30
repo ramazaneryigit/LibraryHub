@@ -20,6 +20,13 @@ def main():
         "Türkiye Diyanet Vakfı İslâm Araştırmaları Merkezi"
     )
 
+    # The publisher is the Work's creator; the KKU-* copy is held by Kırıkkale.
+    # These are different roles and the item needs its own recorded custody.
+    holding_institution_id = create_collective_agent(
+        "Kırıkkale Üniversitesi",
+        agent_type="university",
+    )
+
     add_work_agent(
         work_id,
         institution_id,
@@ -58,6 +65,7 @@ def main():
         manifestation_id,
         "KKU-ANSIKLOPEDI-SET-0001",
         "DR440 I75",
+        holding_institution_id=holding_institution_id,
     )
 
     add_identifier(

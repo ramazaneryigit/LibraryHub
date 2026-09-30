@@ -1,4 +1,4 @@
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..ids import uuid7
 from ..models import Entity, Item, Manifestation
 from ..services.entity_merge import resolve_canonical_entity_id
 
@@ -43,7 +44,7 @@ def create_item(
             detail="Manifestation not found",
         )
 
-    entity_id = uuid4()
+    entity_id = uuid7()
 
     entity = Entity(
         id=entity_id,

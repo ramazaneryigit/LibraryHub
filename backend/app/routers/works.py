@@ -1,4 +1,4 @@
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..ids import uuid7
 from ..models import Entity, Work
 from ..services.work_detail import build_work_detail
 from ..services.entity_merge import resolve_canonical_entity_id
@@ -65,7 +66,7 @@ def create_work(
     payload: WorkCreate,
     db: Session = Depends(get_db),
 ):
-    entity_id = uuid4()
+    entity_id = uuid7()
 
     entity = Entity(
         id=entity_id,

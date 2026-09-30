@@ -119,8 +119,21 @@ def search_by_concept(
 @router.get("/search")
 def search(
     q: str = Query(min_length=1, max_length=500),
+    limit: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
+    # `min_length=1` lets a single space through, and the old code then built the
+    # pattern '%%', which matches every row: a whitespace-only query answered
+    # with fifty arbitrary works instead of saying the query was empty.
+    if not q.strip():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Search query must contain at least one "
+                "non-whitespace character"
+            ),
+        )
+
     search_term = f"%{q.strip()}%"
 
     query = """
@@ -233,12 +246,12 @@ def search(
         OR item_identifier.value ILIKE :search_term
 
     ORDER BY w.canonical_title
-    LIMIT 50
+    LIMIT :limit
     """
 
     rows = db.execute(
         text(query),
-        {"search_term": search_term},
+        {"search_term": search_term, "limit": limit},
     ).mappings().all()
 
     results = []
@@ -264,5 +277,12 @@ def search(
     return {
         "query": q,
         "count": len(results),
+        "limit": limit,
+        # The SQL caps at `limit` before duplicates are collapsed, so a full
+        # page is the honest signal that more may exist. Real pagination needs
+        # the Search Plane (docs/architecture-v2.md §9); until then the client
+        # is told the result set was cut rather than being left to assume it
+        # saw everything.
+        "truncated": len(rows) >= limit,
         "results": results,
     }

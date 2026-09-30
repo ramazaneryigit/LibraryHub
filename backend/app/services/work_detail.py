@@ -7,6 +7,15 @@ from ..models import Work
 from .entity_merge import resolve_canonical_entity_id
 
 
+# Copies whose owning institution was never recorded still have to be counted.
+# Dropping them would understate a library's holdings, which is worse than
+# showing an explicit "institution not recorded" bucket.
+UNATTRIBUTED_INSTITUTION = {
+    "entity_id": None,
+    "name": None,
+}
+
+
 def build_work_detail(
     work_entity_id: UUID,
     db: Session,
@@ -153,20 +162,25 @@ def build_work_detail(
     ).mappings().all()
 
     # Items
+    #
+    # Read through public.items_compat, not the legacy tables. Items now live in
+    # the Tenant Data Plane (tenant.items joined to tenant.holdings) and the
+    # compatibility view reproduces the exact legacy shape while rows created
+    # through the still-legacy write path remain visible. The column list and
+    # the ordering are unchanged, so the response is byte-for-byte what it was.
+    # See docs/architecture-v2.md §0.9.
     item_query = """
     SELECT
-        mi.manifestation_entity_id,
-        i.entity_id,
-        i.barcode,
-        i.shelfmark,
-        i.condition,
-        i.availability_status,
-        i.notes
-    FROM manifestation_item mi
-    JOIN items i
-      ON i.entity_id = mi.item_entity_id
-    WHERE mi.manifestation_entity_id = ANY(:manifestation_ids)
-    ORDER BY i.shelfmark, i.barcode
+        v.manifestation_entity_id,
+        v.entity_id,
+        v.barcode,
+        v.shelfmark,
+        v.condition,
+        v.availability_status,
+        v.notes
+    FROM public.items_compat v
+    WHERE v.manifestation_entity_id = ANY(:manifestation_ids)
+    ORDER BY v.shelfmark, v.barcode
     """
 
     items = db.execute(
@@ -182,17 +196,21 @@ def build_work_detail(
     holding_institutions = []
 
     if item_ids:
+        # The holding institution is structural now: it comes from the
+        # organization that owns the item's tenant, not from a free-text role
+        # on a relation row. The view exposes it as
+        # holding_institution_entity_id and the role literal keeps the response
+        # shape identical.
         holding_query = """
         SELECT
-            iar.item_entity_id,
+            v.entity_id AS item_entity_id,
             ca.entity_id,
             ca.canonical_name,
-            iar.role
-        FROM item_agent_relation iar
+            'holding_institution' AS role
+        FROM public.items_compat v
         JOIN collective_agents ca
-          ON ca.entity_id = iar.agent_entity_id
-        WHERE iar.item_entity_id = ANY(:item_ids)
-          AND iar.role = 'holding_institution'
+          ON ca.entity_id = v.holding_institution_entity_id
+        WHERE v.entity_id = ANY(:item_ids)
         ORDER BY ca.canonical_name
         """
 
@@ -232,16 +250,6 @@ def build_work_detail(
     all_entity_ids.update(
         str(row["entity_id"])
         for row in publishers
-    )
-
-    all_entity_ids.update(
-        str(row["entity_id"])
-        for row in items
-    )
-
-    all_entity_ids.update(
-        str(row["entity_id"])
-        for row in holding_institutions
     )
 
     identifier_query = """
@@ -357,48 +365,58 @@ def build_work_detail(
     holdings_by_item = {}
 
     for row in holding_institutions:
-        item_id = str(row["item_entity_id"])
-        holding_id = str(row["entity_id"])
-
         holdings_by_item.setdefault(
-            item_id, []
+            str(row["item_entity_id"]), []
         ).append({
-            "entity_id": holding_id,
+            "entity_id": str(row["entity_id"]),
             "name": row["canonical_name"],
-            "role": row["role"],
-            "identifiers": identifiers_by_entity.get(
-                holding_id, []
-            ),
-            "nomens": nomens_by_entity.get(
-                holding_id, []
-            ),
         })
 
-    items_by_manifestation = {}
+    # What the global route is allowed to say about copies.
+    #
+    # `/works/{id}/detail` is the *global* view: it answers "what is this work
+    # and who holds it", for anyone. An individual copy is operational data of
+    # the institution that owns it -- a barcode and a shelfmark describe where
+    # one physical object sits on one shelf -- so this route aggregates per
+    # institution instead of listing copies.
+    #
+    # It used to return every tenant's copies. With the scale fixtures that
+    # meant a single work page listing ninety institutions' barcodes, which is
+    # both an unbounded response and a cross-tenant leak once authentication
+    # exists (docs/architecture-v2.md §0.12). Per-copy detail belongs to the
+    # tenant-scoped view that arrives with authentication in Aşama 5.
+    holdings_by_manifestation = {}
+    holdings_by_institution = {}
 
     for row in items:
         manifestation_id = str(row["manifestation_entity_id"])
         item_id = str(row["entity_id"])
+        status = row["availability_status"] or "unknown"
 
-        items_by_manifestation.setdefault(
-            manifestation_id, []
-        ).append({
-            "entity_id": item_id,
-            "barcode": row["barcode"],
-            "shelfmark": row["shelfmark"],
-            "condition": row["condition"],
-            "availability_status": row["availability_status"],
-            "notes": row["notes"],
-            "identifiers": identifiers_by_entity.get(
-                item_id, []
-            ),
-            "nomens": nomens_by_entity.get(
-                item_id, []
-            ),
-            "holding_institutions": holdings_by_item.get(
-                item_id, []
-            ),
-        })
+        institutions = holdings_by_item.get(item_id) or [
+            UNATTRIBUTED_INSTITUTION
+        ]
+
+        for institution in institutions:
+            key = (manifestation_id, institution["entity_id"])
+            entry = holdings_by_institution.get(key)
+
+            if entry is None:
+                entry = {
+                    "entity_id": institution["entity_id"],
+                    "name": institution["name"],
+                    "item_count": 0,
+                    "availability": {},
+                }
+                holdings_by_institution[key] = entry
+                holdings_by_manifestation.setdefault(
+                    manifestation_id, []
+                ).append(entry)
+
+            entry["item_count"] += 1
+            entry["availability"][status] = (
+                entry["availability"].get(status, 0) + 1
+            )
 
     manifestations_by_expression = {}
 
@@ -425,8 +443,10 @@ def build_work_detail(
             "publishers": publishers_by_manifestation.get(
                 manifestation_id, []
             ),
-            "items": items_by_manifestation.get(
-                manifestation_id, []
+            # Aggregated, not per copy. See the note where this is built.
+            "holdings": sorted(
+                holdings_by_manifestation.get(manifestation_id, []),
+                key=lambda holding: (holding["name"] is None, holding["name"] or ""),
             ),
         })
 
