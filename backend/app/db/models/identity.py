@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, event, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..base import Base, utcnow
 from ...core.ids import uuid7
@@ -128,6 +128,40 @@ class Entity(Base):
         default=utcnow,
         onupdate=utcnow,
         nullable=False,
+    )
+
+    # ------------------------------------------------------------- subtypes
+    #
+    # Declared for the *flush order*, not for navigation.
+    #
+    # Every subtype row -- `works`, `persons`, `manifestations` and the rest --
+    # has a foreign key to `entities`, and the database enforces it immediately.
+    # SQLAlchemy orders its INSERTs across mappers that have no `relationship()`
+    # between them by mapper name, and a mapper name is its module-qualified
+    # class name. While every model lived in one module that accident sorted
+    # `app.models.Entity` before `app.models.Work` and the order happened to be
+    # right. Splitting the models by domain renamed them to
+    # `app.db.models.identity.Entity` and `app.db.models.bibliographic.Work`, the
+    # sort flipped, and every create of a Work, Person, Concept, Expression,
+    # Manifestation, Place, TimeSpan, CollectiveAgent or ClassificationNode
+    # started failing on the foreign key.
+    #
+    # These relationships make the dependency explicit instead of accidental.
+    # `lazy="raise"` because nothing navigates them: they exist so the unit of
+    # work knows the entity must be written first, and a lazy load here would be
+    # an N+1 query nobody asked for.
+    works: Mapped[list["Work"]] = relationship(lazy="raise")
+    expressions: Mapped[list["Expression"]] = relationship(lazy="raise")
+    manifestations: Mapped[list["Manifestation"]] = relationship(lazy="raise")
+    persons: Mapped[list["Person"]] = relationship(lazy="raise")
+    collective_agents: Mapped[list["CollectiveAgent"]] = relationship(
+        lazy="raise"
+    )
+    concepts: Mapped[list["Concept"]] = relationship(lazy="raise")
+    places: Mapped[list["Place"]] = relationship(lazy="raise")
+    time_spans: Mapped[list["TimeSpan"]] = relationship(lazy="raise")
+    classification_nodes: Mapped[list["ClassificationNode"]] = relationship(
+        lazy="raise"
     )
 
 

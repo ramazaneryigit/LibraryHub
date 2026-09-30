@@ -609,6 +609,83 @@ def check_legacy_item_surface() -> None:
     )
 
 
+def check_subtype_insert_order(engine) -> None:
+    """A subtype row and its entity can be written in one transaction.
+
+    The database requires the `entities` row to exist before the `works` row that
+    points at it, and SQLAlchemy orders its INSERTs across mappers that have no
+    relationship between them by module-qualified class name. That accident held
+    while every model lived in one module -- `app.models.Entity` sorts before
+    `app.models.Work` -- and broke the moment the models were split by domain,
+    because `app.db.models.bibliographic.Work` sorts before
+    `app.db.models.identity.Entity`. Every create of a Work, Person, Concept,
+    Expression, Manifestation, Place, TimeSpan, CollectiveAgent and
+    ClassificationNode failed on the foreign key.
+
+    A check rather than a test because the constraint is PostgreSQL's: on SQLite
+    the ordering is unobservable and the suite cannot see it.
+    """
+
+    from sqlalchemy.orm import Session
+
+    from app.core.ids import uuid7
+    from app.db.models import Entity, Person, Work
+
+    written = []
+
+    try:
+        with Session(engine) as session:
+            work_id = uuid7()
+            person_id = uuid7()
+            written = [work_id, person_id]
+
+            session.add(Entity(id=work_id, entity_type="WORK"))
+            session.add(
+                Work(
+                    entity_id=work_id,
+                    canonical_title="Siralama Sinamasi",
+                    work_type="book",
+                )
+            )
+            session.add(Entity(id=person_id, entity_type="PERSON"))
+            session.add(
+                Person(
+                    entity_id=person_id,
+                    canonical_name="Siralama Sinamasi",
+                )
+            )
+            session.commit()
+
+        record(
+            "Alt tur yazimi ebeveyn entity'yi buluyor",
+            True,
+            "Work ve Person tek islemde yazildi",
+        )
+
+    except Exception as exc:
+        record(
+            "Alt tur yazimi ebeveyn entity'yi buluyor",
+            False,
+            str(exc).strip().splitlines()[0][:110],
+        )
+
+    finally:
+        if written:
+            with engine.begin() as connection:
+                connection.execute(
+                    text("delete from works where entity_id = any(:ids)"),
+                    {"ids": written},
+                )
+                connection.execute(
+                    text("delete from persons where entity_id = any(:ids)"),
+                    {"ids": written},
+                )
+                connection.execute(
+                    text("delete from entities where id = any(:ids)"),
+                    {"ids": written},
+                )
+
+
 def main() -> int:
     owner_engine = create_engine(OWNER_URL)
     app_engine = create_engine(APP_URL)
@@ -634,6 +711,9 @@ def main() -> int:
         print("\n-- yazma siniri --")
         check_tenant_role_jail(app)
         check_branch_guard(owner, app)
+
+        print("\n-- yazma yolu --")
+        check_subtype_insert_order(owner_engine)
 
         print("\n-- Asama 6 dogrulamasi --")
         check_legacy_item_surface()
