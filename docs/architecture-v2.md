@@ -878,6 +878,101 @@ yanılgısına yol açtı. İkisinde de sonucu doğrulayıp düzelttim.
 
 ---
 
+### 0.15 Sağlamlaştırma turu — TAMAMLANDI
+
+Raporlama ve admin paneli istendiği gibi beklemede. Bu turun amacı, kendi yazdığım
+"açık kalanlar" listesini kapatmak ve **önceki kararların sonraki aşamayı bloke edip
+etmediğini varsaymak yerine ölçmek** oldu.
+
+**Önce ölçtüm, sonra değiştirdim.** Aşama 6'yı neyin engellediğini bilmeden dokunmak,
+bu projenin kendi kuralına aykırı olurdu. Ölçüm sonucu:
+
+| Soru | Ölçüm |
+|---|---|
+| `entity_relation` ITEM entity'sine bakıyor mu | **0** — engel değil |
+| `entity_merges` ITEM'e bakıyor mu | **1** — gerçek engel |
+| `item_agent_relation(holding_institution)` tenant plane'inde karşılık ister mi | **Hayır** — 5 satırın tamamı holding→şube→kuruluş üzerinden birebir türetiliyor |
+| `manifestation_item` temsil ediliyor mu | **Evet** — 12 satır, orphan 0 |
+| `control.branches` politikası var mı | **Yok** — kapatılacak delik |
+
+`item_agent_relation` bulgusu kayda değer: **kurum aidiyeti artık ilişki tablosunda değil,
+yapıda.** Eski modelde nüsha global bir entity'ydi ve kime ait olduğu bir ilişki satırıyla
+söyleniyordu; yeni modelde `item → holding → branch → organization` bunu zaten söylüyor.
+Yani Aşama 6 bu tabloyu düşürdüğünde kaybolan bir bilgi yok.
+
+#### Yapılanlar
+
+**1. `control.branches` politikası (migration `f8a1c4e70d35`).** Diğer bütün `tenant.*`
+tablolarının `tenant_isolation` politikası vardı, bu tablonun yoktu. Bugün bunu kötüye
+kullanan bir şey yok — tek okuyucu kiracı oturumu içinde çalışan şube kontrolü — ama
+"henüz kimse okumuyor" bugünün kodunun özelliği, şemanın değil. Politika eklendi; mevcut
+hiçbir şeyi bozmadı çünkü `control.branches`'ı kiracı işlemi dışında okuyan uç **yok**
+(kontrol edildi). Sahip süper kullanıcı olduğu için yönetici script'leri etkilenmedi.
+
+**2. Şube sahipliği tetikleyicisi.** `fk_holdings_branch` şubenin **var olduğunu** doğrular,
+**sizin olduğunu** değil — üstelik FK denetimi RLS'in dışında çalışır. Yani bir kurum
+holding'ini başka bir kurumun şubesine bağlayabilirdi ve bütün kısıtlar sağlanmış görünürdü.
+`_assert_branch_is_ours` bunu uçta yakalıyordu; tetikleyici **çağırmayan yollar için** de
+yakalıyor, ki henüz yazılmamış bir toplu içe aktarma tam olarak böyle bir yoldur.
+Tetikleyici bilinçli olarak `security definer` **değil**: `control.branches`'ı çağıranın
+gözünden okumalı ki kararı politika versin.
+
+**3. Tenant rolü kimlik tablolarından arındırıldı.** `libraryhub_tenant_app`,
+Aşama 3'ün şema geneli varsayılan yetkisinden dolayı `control.email_verifications` ve
+`control.organization_domains` üzerinde hâlâ `SELECT` tutuyordu. Kiracı işleminin kimlik
+tablolarına hiç uzanamaması gerekir; ikisi de iptal edildi.
+
+**4. `alembic.ini`'deki gömülü parola kaldırıldı.** Satır, `library:library_dev_password`
+içeren çalışan bir bağlantı adresi taşıyordu — yani repoda duran bir kimlik bilgisi. Daha
+kötüsü, bir yedek değer sessizce kazanabilir veya sessizce kaybedebilir; migration'ların
+yanlış veritabanına koşması tam olarak böyle olur. Artık yalnızca ortam değişkeni okunuyor
+ve yoksa `env.py` **tahmin etmeyi reddedip** hata veriyor.
+
+**5. Kullanımdan kaldırılan 422 sabiti** literal `422` ile değiştirildi; Starlette'in
+hangi sürümü kurulu olursa olsun çalışır.
+
+#### Ölçülen sonuç
+
+Senaryo kontrolleri **18 → 25**'e çıktı, **24'ü geçiyor**:
+
+| Kontrol | Sonuç |
+|---|---|
+| Tenant rolü global plane'de INSERT/UPDATE/DELETE | `permission denied for table works` |
+| Tenant rolü `control.users` INSERT / `control.sessions` DELETE | `permission denied` |
+| `control.branches` tenant bağlaması olmadan | **0 şube görünüyor** (fail-closed) |
+| Yabancı şubeye holding yazma (uygulama kontrolü atlanarak) | **`CheckViolation: branch … does not belong`** |
+| Aşama 6: her legacy item'ın tenant karşılığı | 0 eksik |
+| Aşama 6: `manifestation_item` holding'lerde | 0 temsil edilmeyen |
+| Aşama 6: kurum aidiyeti yapıdan türetilebiliyor | 0 çelişen satır |
+| Aşama 6: başı boş ITEM entity | 0 |
+| **Aşama 6: ITEM entity'ye bakan merge/relation** | **1 — BLOKE** |
+
+#### Aşama 6'nın tek engeli, ölçülmüş hâliyle
+
+`entity_merges` içinde ITEM→ITEM bir kayıt var ve bu **tek satır değil**: `merge_method =
+'controlled_test'` olan **10 satırlık** kasıtlı bir canonical-redirect test seti; PERSON,
+WORK, ORGANIZATION, EXPRESSION, MANIFESTATION, ITEM, CONCEPT ve CLASSIFICATION çiftlerini
+kapsıyor. Yanında `item_agent_relation.role='controlled_test_holder'` ve bir test kuruluşu
+var.
+
+Bu **silinecek çöp değil, işe yarar bir fixture** — canonical redirect mantığının bütün
+entity tiplerinde çalıştığını gösteriyor. Doğru çözüm, Aşama 6'da **yalnızca ITEM çiftini ve
+ona bağlı `controlled_test_holder` ilişkisini emekliye ayırmak**; diğer sekiz tip kalır,
+çünkü onlar hâlâ global entity.
+
+Bu bir veri küratörlüğü kararı olduğu için **uygulamadım**. Kontrol seti artık bunu kalıcı
+olarak raporluyor, yani engel unutulabilir değil: Aşama 6'ya başlandığında ilk iş bu.
+
+#### Kendi hatam
+
+Şube koruması kontrolü ilk yazdığımda **hatalı başarısız oldu**: mesajı 90 karaktere
+kırpıp sonra o kırpılmış metinde `does not belong` arıyordum ve metin `does not belon`
+olarak kesiliyordu. Tetikleyici kusursuz çalışırken test kırmızıydı. Artık tam mesajda
+eşleşiyor, kırpma yalnızca gösterim için. Aynı desen kiracı rolü kontrolünde de vardı,
+orası da düzeltildi.
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman
