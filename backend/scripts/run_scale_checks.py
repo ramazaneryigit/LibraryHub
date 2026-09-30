@@ -1073,6 +1073,57 @@ def check_nomen_normalization(owner) -> None:
     )
 
 
+def check_holdings_reach_the_catalogue(owner) -> None:
+    """Every holding is visible as a library, whether or not it has copies.
+
+    The institution is a property of the holding -- `holdings.branch_id` ->
+    `branches.organization_id` -> `organizations.collective_agent_entity_id` --
+    and it used to be read off the *items* instead. So a library that had
+    catalogued the holding but not the individual copies was absent from the
+    union catalogue. Measured when this was found: six of sixteen holdings had no
+    items, a third of the libraries, including ones holding works that other
+    libraries' holdings also cover.
+
+    That is not an edge case: it is a serial, a donation not yet itemised, or a
+    migration that moved holdings before items -- which is what the `migrated-*`
+    rows are. At a thousand libraries the missing third is the catalogue.
+
+    Both numbers are reported, because "no holding is missing" and "some holdings
+    have no institution recorded" are different facts and only the first is a
+    failure. A holding with no organization is an incomplete record, not a
+    library, and the reader is told so rather than shown a blank name.
+    """
+
+    total = owner.execute(
+        text("select count(*) from tenant.holdings")
+    ).scalar()
+
+    projected = owner.execute(
+        text("select count(*) from public.holdings_compat")
+    ).scalar()
+
+    without_items = owner.execute(
+        text(
+            "select count(*) from public.holdings_compat where item_count = 0"
+        )
+    ).scalar()
+
+    without_institution = owner.execute(
+        text(
+            "select count(*) from public.holdings_compat "
+            "where holding_institution_entity_id is null"
+        )
+    ).scalar()
+
+    record(
+        "Her holding toplu katalogda gorunuyor",
+        total == projected,
+        f"{projected}/{total} holding yansitildi, "
+        f"{without_items} tanesi nushasiz, "
+        f"{without_institution} tanesinde kurum kaydi yok",
+    )
+
+
 def check_app_imports_resolve() -> None:
     """Every absolute `app.*` import in the source points at something real.
 
@@ -1166,6 +1217,7 @@ def main() -> int:
         print("\n-- kaynak tutarliligi --")
         check_app_imports_resolve()
         check_nomen_normalization(owner)
+        check_holdings_reach_the_catalogue(owner)
 
         print("\n-- outbox --")
         check_outbox_same_transaction(owner)

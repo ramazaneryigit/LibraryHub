@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import json
 from uuid import UUID
 
 from sqlalchemy import text
@@ -161,63 +164,49 @@ def build_work_detail(
         {"manifestation_ids": manifestation_ids},
     ).mappings().all()
 
-    # Items
+    # Holdings, and the institution that owns each.
     #
-    # Read through public.items_compat, not the legacy tables. Items now live in
-    # the Tenant Data Plane (tenant.items joined to tenant.holdings) and the
-    # compatibility view reproduces the exact legacy shape while rows created
-    # through the still-legacy write path remain visible. The column list and
-    # the ordering are unchanged, so the response is byte-for-byte what it was.
-    # See docs/architecture-v2.md §0.9.
-    item_query = """
+    # Read at the *holding* level, not the item level, and that distinction is
+    # the whole point of this query. The institution is a property of the
+    # holding -- its branch's organization -- and deriving it from items meant a
+    # library that had catalogued the holding but not the individual copies was
+    # invisible. Measured on this database when the defect was found: six of
+    # sixteen holdings had no items, so a third of the libraries were missing
+    # from the answer, including one holding a work that another library's
+    # holding also covers.
+    #
+    # Cataloguing a holding before its copies is not an edge case. It is a
+    # serial, a collection, a donation not yet itemised, or a migration that
+    # moved holdings before items -- which is exactly what the `migrated-*` rows
+    # are. A union catalogue of a thousand libraries cannot have a third of them
+    # absent because they catalogued one level coarser.
+    #
+    # `items_compat` is still the item-level projection and per-copy work still
+    # uses it; this is the level above, and `holdings_compat` carries the item
+    # count and availability so a holding with no copies reports zero rather than
+    # vanishing. See docs/architecture-v2.md §0.28.
+    holding_query = """
     SELECT
-        v.manifestation_entity_id,
-        v.entity_id,
-        v.barcode,
-        v.shelfmark,
-        v.condition,
-        v.availability_status,
-        v.notes
-    FROM public.items_compat v
-    WHERE v.manifestation_entity_id = ANY(:manifestation_ids)
-    ORDER BY v.shelfmark, v.barcode
+        h.holding_id,
+        h.manifestation_entity_id,
+        h.holding_type,
+        h.call_number,
+        h.status,
+        h.item_count,
+        h.availability,
+        h.holding_institution_entity_id,
+        ca.canonical_name AS institution_name
+    FROM public.holdings_compat h
+    LEFT JOIN collective_agents ca
+      ON ca.entity_id = h.holding_institution_entity_id
+    WHERE h.manifestation_entity_id = ANY(:manifestation_ids)
+    ORDER BY ca.canonical_name, h.local_holding_key
     """
 
-    items = db.execute(
-        text(item_query),
+    holdings = db.execute(
+        text(holding_query),
         {"manifestation_ids": manifestation_ids},
     ).mappings().all()
-
-    item_ids = [
-        str(row["entity_id"])
-        for row in items
-    ]
-
-    holding_institutions = []
-
-    if item_ids:
-        # The holding institution is structural now: it comes from the
-        # organization that owns the item's tenant, not from a free-text role
-        # on a relation row. The view exposes it as
-        # holding_institution_entity_id and the role literal keeps the response
-        # shape identical.
-        holding_query = """
-        SELECT
-            v.entity_id AS item_entity_id,
-            ca.entity_id,
-            ca.canonical_name,
-            'holding_institution' AS role
-        FROM public.items_compat v
-        JOIN collective_agents ca
-          ON ca.entity_id = v.holding_institution_entity_id
-        WHERE v.entity_id = ANY(:item_ids)
-        ORDER BY ca.canonical_name
-        """
-
-        holding_institutions = db.execute(
-            text(holding_query),
-            {"item_ids": item_ids},
-        ).mappings().all()
 
     # All identifiers for entities in this Work tree
     all_entity_ids = {str(work.entity_id)}
@@ -362,16 +351,6 @@ def build_work_detail(
             ),
         })
 
-    holdings_by_item = {}
-
-    for row in holding_institutions:
-        holdings_by_item.setdefault(
-            str(row["item_entity_id"]), []
-        ).append({
-            "entity_id": str(row["entity_id"]),
-            "name": row["canonical_name"],
-        })
-
     # What the global route is allowed to say about copies.
     #
     # `/works/{id}/detail` is the *global* view: it answers "what is this work
@@ -388,34 +367,54 @@ def build_work_detail(
     holdings_by_manifestation = {}
     holdings_by_institution = {}
 
-    for row in items:
+    # One entry per holding, not per item.
+    #
+    # A holding with no copies is still a library that has the work, and its
+    # `item_count` of zero is the honest answer rather than a reason to leave it
+    # out. The availability map comes from the view already aggregated, so this
+    # is a projection of one row instead of a sum over many.
+    for row in holdings:
         manifestation_id = str(row["manifestation_entity_id"])
-        item_id = str(row["entity_id"])
-        status = row["availability_status"] or "unknown"
 
-        institutions = holdings_by_item.get(item_id) or [
-            UNATTRIBUTED_INSTITUTION
-        ]
+        institution_id = row["holding_institution_entity_id"]
+        institution_name = row["institution_name"]
 
-        for institution in institutions:
-            key = (manifestation_id, institution["entity_id"])
-            entry = holdings_by_institution.get(key)
+        if institution_id is None:
+            # A holding with no organization behind it is an incomplete record,
+            # not a library. Saying so keeps it visible without pretending it
+            # names somewhere a reader could go.
+            institution_id = UNATTRIBUTED_INSTITUTION["entity_id"]
+            institution_name = UNATTRIBUTED_INSTITUTION["name"]
 
-            if entry is None:
-                entry = {
-                    "entity_id": institution["entity_id"],
-                    "name": institution["name"],
-                    "item_count": 0,
-                    "availability": {},
-                }
-                holdings_by_institution[key] = entry
-                holdings_by_manifestation.setdefault(
-                    manifestation_id, []
-                ).append(entry)
+        key = (manifestation_id, str(institution_id))
+        entry = holdings_by_institution.get(key)
 
-            entry["item_count"] += 1
+        if entry is None:
+            entry = {
+                "entity_id": str(institution_id),
+                "name": institution_name,
+                "item_count": 0,
+                "availability": {},
+                "holdings": 0,
+            }
+            holdings_by_institution[key] = entry
+            holdings_by_manifestation.setdefault(
+                manifestation_id, []
+            ).append(entry)
+
+        entry["item_count"] += row["item_count"] or 0
+        entry["holdings"] += 1
+
+        availability = row["availability"] or {}
+
+        # PostgreSQL hands jsonb back parsed; SQLite, where this table does not
+        # exist but the shape is still exercised, would hand back text.
+        if isinstance(availability, str):
+            availability = json.loads(availability)
+
+        for status, count in availability.items():
             entry["availability"][status] = (
-                entry["availability"].get(status, 0) + 1
+                entry["availability"].get(status, 0) + count
             )
 
     manifestations_by_expression = {}

@@ -26,58 +26,70 @@ function escapeHtml(value) {
    ARAMA SONUCU KARTI
 --------------------------------------------------------- */
 
-/* Bir eseri tutan kütüphaneler, ağacın tamamından toplanır.
+/* Eseri tutan kütüphaneler, **baskı bazında**.
  *
- * API holding'leri ifade → yayın → holding yolunda veriyor; arama sonucu kartı
- * ise "kimde var?" sorusunu ilk bakışta cevaplamalı, yoksa okuyucu her kayda
- * tıklamak zorunda kalır. Aynı kurum birden çok baskıyı tutabildiği için
- * toplanıyor.
+ * Asıl soru "bu eserin 2024 nüshası hangi kütüphanede" ve bunun cevabı yalnızca
+ * toplam bir sayıda kaybolur: "5 nüsha · 3 kütüphane" hangi baskının nerede
+ * olduğunu söylemez. Bu yüzden kütüphaneler manifestation (baskı) düğümünün
+ * altında toplanıyor, tam da veritabanındaki bağın durduğu yerde.
  */
-function workHoldings(work) {
-    const byInstitution = new Map();
+function workEditions(work) {
+    const editions = [];
 
     (work.expressions || []).forEach(expression => {
         (expression.manifestations || []).forEach(manifestation => {
-            (manifestation.holdings || []).forEach(holding => {
-                const key = holding.entity_id || "kaydedilmemis";
+            const holdings = (manifestation.holdings || [])
+                .slice()
+                .sort((left, right) => left.name.localeCompare(right.name, "tr"));
 
-                const entry = byInstitution.get(key) || {
-                    entity_id: holding.entity_id,
-                    name: holding.name,
-                    item_count: 0,
-                    availability: {},
-                };
-
-                entry.item_count += holding.item_count || 0;
-
-                Object.entries(holding.availability || {}).forEach(
-                    ([status, count]) => {
-                        entry.availability[status] =
-                            (entry.availability[status] || 0) + count;
-                    }
-                );
-
-                byInstitution.set(key, entry);
+            editions.push({
+                entity_id: manifestation.entity_id,
+                label: editionLabel(manifestation),
+                holdings: holdings,
+                item_count: holdings.reduce(
+                    (sum, holding) => sum + (holding.item_count || 0),
+                    0
+                ),
             });
         });
     });
 
-    return [...byInstitution.values()].sort(
-        (left, right) => right.item_count - left.item_count
-    );
+    // En çok nüshası olan baskı önce: bir okuyucunun aradığı baskı, genellikle
+    // kütüphanelerin çoğunun tuttuğu baskıdır.
+    return editions.sort((left, right) => right.item_count - left.item_count);
 }
 
 
-/* Kartta gösterilen kütüphane sayısı. Sınırsız bırakmak, tek bir eserin altında
- * yüz kurum listelemek demekti -- bir kez tam olarak bu oldu ve gerçek
- * kütüphaneler listeyi boğdu. Gerisi sayıyla bildirilir, detayda tamamı var. */
-const HOLDINGS_ON_CARD = 5;
+function editionLabel(manifestation) {
+    const parts = [];
+
+    if (manifestation.publication_date) {
+        parts.push(manifestation.publication_date);
+    }
+
+    if (manifestation.publication_statement) {
+        parts.push(manifestation.publication_statement);
+    }
+
+    if (!parts.length) {
+        parts.push("Baskı bilgisi yok");
+    }
+
+    return parts.join(" · ");
+}
+
+
+/* Kartta gösterilen baskı ve kütüphane sayısı. Sınırsız bırakmak, tek bir eserin
+ * altında yüz kurum listelemek demekti -- bir kez tam olarak bu oldu ve gerçek
+ * kütüphaneler listeyi boğdu (§0.23). Gerisi sayıyla bildirilir; tamamı detayda. */
+const EDITIONS_ON_CARD = 3;
+const LIBRARIES_PER_EDITION = 4;
 
 
 function renderWorkHoldings(work) {
-    const holdings = workHoldings(work);
+    const editions = workEditions(work);
 
-    if (holdings.length === 0) {
+    if (editions.length === 0) {
         return `
             <div class="result-holdings empty">
                 Bu eseri tutan kütüphane kaydı yok.
@@ -85,41 +97,68 @@ function renderWorkHoldings(work) {
         `;
     }
 
-    const totalCopies = holdings.reduce(
-        (sum, holding) => sum + holding.item_count,
+    const totalCopies = editions.reduce(
+        (sum, edition) => sum + edition.item_count,
         0
     );
 
-    const shown = holdings.slice(0, HOLDINGS_ON_CARD);
-    const rest = holdings.length - shown.length;
+    const libraries = new Set();
 
-    const rows = shown
-        .map(holding => `
-            <div class="result-holding">
-                <span class="result-holding-name">
-                    ${escapeHtml(holding.name) || "Kurum kaydedilmemiş"}
-                </span>
+    editions.forEach(edition => {
+        edition.holdings.forEach(holding => {
+            libraries.add(holding.entity_id || holding.name || "kaydedilmemis");
+        });
+    });
 
-                <span class="result-holding-count">
-                    ${holding.item_count} nüsha
-                </span>
-            </div>
-        `)
+    const shownEditions = editions.slice(0, EDITIONS_ON_CARD);
+    const restEditions = editions.length - shownEditions.length;
+
+    const rows = shownEditions
+        .map(edition => {
+            const names = edition.holdings
+                .slice(0, LIBRARIES_PER_EDITION)
+                .map(holding => escapeHtml(holding.name) || "Kurum kaydedilmemiş")
+                .join(" · ");
+
+            const rest = edition.holdings.length - LIBRARIES_PER_EDITION;
+
+            return `
+                <div class="result-edition">
+                    <div class="result-edition-head">
+                        <span class="result-edition-label">
+                            ${escapeHtml(edition.label)}
+                        </span>
+
+                        <span class="result-edition-count">
+                            ${edition.item_count} nüsha ·
+                            ${edition.holdings.length} kütüphane
+                        </span>
+                    </div>
+
+                    <div class="result-edition-libraries">
+                        ${names}
+                        ${rest > 0 ? ` · ve ${rest} kütüphane daha` : ""}
+                    </div>
+                </div>
+            `;
+        })
         .join("");
 
     return `
         <div class="result-holdings">
             <div class="result-holdings-total">
-                ${totalCopies} nüsha · ${holdings.length} kütüphane
+                ${totalCopies} nüsha ·
+                ${editions.length} baskı ·
+                ${libraries.size} kütüphane
             </div>
 
             ${rows}
 
             ${
-                rest > 0
+                restEditions > 0
                     ? `
                         <div class="result-holding rest">
-                            ve ${rest} kütüphane daha · kaydı görüntüleyin
+                            ve ${restEditions} baskı daha · kaydı görüntüleyin
                         </div>
                       `
                     : ""

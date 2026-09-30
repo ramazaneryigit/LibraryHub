@@ -40,6 +40,27 @@ def create_app() -> FastAPI:
         name="static",
     )
 
+    @application.middleware("http")
+    async def revalidate_static_assets(request, call_next):
+        """Make the browser check before reusing a script or a stylesheet.
+
+        `StaticFiles` sends `Last-Modified` and an ETag but no `Cache-Control`,
+        and with none a browser may reuse a file without asking. That is how a
+        fix ships and the person who reported the bug still sees the old page --
+        which happened here, twice, and both times looked like the fix had not
+        worked.
+
+        `no-cache` rather than `no-store`: it means "revalidate", so the answer is
+        still a cheap 304 and the asset is not re-sent.
+        """
+
+        response = await call_next(request)
+
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
+
+        return response
+
     @application.get("/", include_in_schema=False)
     def root():
         return FileResponse("app/static/index.html")

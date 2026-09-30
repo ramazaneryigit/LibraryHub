@@ -1920,6 +1920,103 @@ başına normalizasyonun *doğru* olduğunu göstermez.
 
 ---
 
+### 0.28 Kütüphane bağı nüshadan değil holding'den kuruluyor
+
+#### Asıl mesele
+
+Bu projenin amacı tek bir cümlede: **"bu eserin 2020 nüshası hangi üniversite
+kütüphanesinde"** — yüzlerce, binlerce kütüphanenin toplu kataloğu. O cümlenin
+yapısal karşılığı şu zincirdir:
+
+```
+Work → Expression → Manifestation (baskı) → Holding (kütüphane) → Item (nüsha)
+```
+
+ve **kütüphane Holding'in özelliğidir**: `holdings.branch_id` →
+`branches.organization_id` → `organizations.collective_agent_entity_id`. Nüshayla
+hiç ilgisi yok.
+
+#### Kusur
+
+Kod bu zinciri **nüshadan** okuyordu: `public.items_compat` (bir *item*
+projeksiyonu) dolaşılıyor ve kurum her nüshanın üstünden çıkarılıyordu.
+
+Sonuç: **holding'i kataloglayıp nüshalarını henüz girmemiş bir kütüphane toplu
+katalogda hiç görünmüyordu.** Ölçüm, kusur bulunduğunda:
+
+| Ölçüm | Değer |
+|---|---|
+| Toplam holding | 16 |
+| **Nüshasız holding** | **6** |
+| Kurum kaydı olmayan holding | 6 |
+
+Yani kütüphanelerin **üçte biri** cevapta yoktu.
+
+Bu bir uç durum değil: bir süreli yayın, henüz kalem kalem işlenmemiş bir bağış,
+ya da holding'leri nüshalardan önce taşımış bir göç — `migrated-*` satırları tam
+olarak budur. **Bin kütüphaneli bir yapıda eksik üçte bir, katalogun kendisidir.**
+
+#### Düzeltme
+
+`public.holdings_compat` — holding düzeyinde projeksiyon. Zinciri bir kez ifade
+eder, böylece her okuyucu aynı soruyu aynı şekilde sorar; bin kütüphaneli bir
+toplu katalogda "kimde var" sorusunun iki cevabı olmaz.
+
+`items_compat` kalıyor: nüsha düzeyi projeksiyonudur ve nüsha başına durum hâlâ
+oradan gelir. İkisi birbirinin tamamlayıcısı.
+
+`work_detail` artık holding'leri dolaşıyor; `item_count` sıfır olabiliyor ve bu
+**gizleme sebebi değil, dürüst cevap**.
+
+#### Arayüz: baskı bazında
+
+Arama kartı kütüphaneleri **manifestation (baskı) altında** topluyor, çünkü soru
+"kimde var" değil **"2020 nüshası kimde var"**:
+
+```
+5 nüsha · 3 baskı · 3 kütüphane
+  1867 · Санкт-Петербург : А. Базунов…      2 nüsha · 1 kütüphane
+    Российская государственная библиотека
+  2024 · İstanbul : Türkiye İş Bankası…     2 nüsha · 2 kütüphane
+    Hacettepe Üniversitesi · Kırıkkale Üniversitesi
+  2025 · Ankara : Test Yayıncısı            1 nüsha · 1 kütüphane
+    Hacettepe Üniversitesi
+```
+
+Kartta 3 baskı ve baskı başına 4 kütüphane gösteriliyor, gerisi sayıyla
+bildiriliyor — sınırsız bırakmak §0.23'ü tekrarlardı.
+
+#### Ve neden "düzeltildi" dedikten sonra hâlâ görünmüyordu
+
+`/static/*` **`Cache-Control` başlığı olmadan** sunuluyordu. `StaticFiles`
+`Last-Modified` ve ETag gönderir ama `Cache-Control` göndermez, ve o yokken
+tarayıcı dosyayı sormadan yeniden kullanabilir. Düzeltme yayınlanır, bildiren
+kişi eski sayfayı görür, ve bu **düzeltme işe yaramamış gibi** görünür — bu turda
+iki kez oldu. Artık `no-cache` (yeniden doğrula, yeniden gönderme) başlığı var.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **123/123** |
+| Senaryo kontrolleri | **37/37** (1 yeni) |
+| `alembic check` | temiz, tek head `d1f6b2c47a59` |
+| Holding yansıması | **16/16** — hiçbiri kaybolmuyor |
+| Nüshasız holding | **6** — artık kütüphane olarak görünüyor |
+| `Bilgi Yönetimine Giriş` | 2 holding (biri 0 nüshalı) görünüyor |
+| `Suç ve Ceza` | 3 baskı · 3 kütüphane, baskı bazında |
+| Önbellek başlığı | `/static/*` → `Cache-Control: no-cache` |
+| Panel uçları | 200 |
+
+#### Açık kalan
+
+**6 holding'de kurum kaydı yok** ve bunlar `Unassigned items (migration)` gibi göç
+kovaları. Şu an "Kurum kaydedilmemiş" olarak dürüstçe görünüyorlar, ama bin
+kütüphaneli bir yapıda bu bir kütüphane değil bir **veri kalitesi sinyali**dir ve
+katalogda kütüphane gibi görünmemeli. Ayrı bir iş.
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman

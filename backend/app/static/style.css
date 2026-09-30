@@ -330,6 +330,39 @@ footer {
     padding-top: 6px;
 }
 
+.result-edition {
+    padding: 7px 0;
+    border-top: 1px solid var(--border);
+}
+
+.result-edition:first-of-type {
+    border-top: 0;
+}
+
+.result-edition-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.result-edition-label {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.result-edition-count {
+    color: var(--muted);
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.result-edition-libraries {
+    color: var(--primary-light);
+    font-size: 13px;
+    margin-top: 2px;
+}
+
 .detail-button {
     margin-top: 12px;
     border: 0;
