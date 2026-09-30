@@ -743,6 +743,141 @@ düzeltildi:
 
 ---
 
+### 0.14 Self-servis hesaplar ve kiracı yazma sınırı — TAMAMLANDI
+
+Gereksinim üç parçalıydı: **iki ayrı kullanıcı kitlesi** (akademik alan adlı
+kütüphaneciler/akademisyenler ve kurumsal alan adlı yayınevi/organizasyon sorumluları),
+**kendi verilerini yapıyı bozmadan ekleyip düzeltebilmeleri**, ve **admin paneli**.
+Üçüncüsü bir sonraki aşamanın işi; ilk ikisinin altyapısı burada.
+
+**Migration `e7f0b3d69c24`**; zincir **36 revision**, tek head. `control.users` iki yeni
+sütun kazandı (`account_kind`, `email_verified_at`), `control.organization_domains` ve
+`control.email_verifications` eklendi.
+
+#### İki kitle, iki kanıt
+
+Bir akademik alan adı (`@kku.edu.tr`, `@ox.ac.uk`) **kendi başına kanıttır**: kimseye
+kuruma mensup olmadan böyle bir adres verilmez. Bu yüzden orada yalnızca adresin posta
+alabildiği gösterilir. Kurumsal bir alan adı (`@yayinevi.com.tr`) hiçbir şey kanıtlamaz —
+herkes alan adı tescil edebilir — bu yüzden alan adının bir kuruluşa bağlanması ve
+`verification_method` ile **nasıl** doğrulandığının kaydedilmesi gerekir. "Doğrulandı" ama
+"nasıl"ı yok, sonradan denetlenemez.
+
+**Ücretsiz posta sağlayıcıları doğrudan reddedilir.** `@gmail.com` ne akademik ne
+kurumsaldır; mensubiyeti gösteremez ve bir şirket adına konuşma yetkisini tek bir kişinin
+özel posta kutusuna vermek olur. Bu yüzden bu bir ret, daha zayıf bir hesap türü değil.
+
+**Tek geçit `control.organization_domains`.** Hesap ancak alan adı bir kuruluşa tanımlıysa
+açılabilir. Bu bilinçli: bir kütüphaneci ancak **sistemde olan** bir kütüphanenin nüshalarını
+yönetebilir, dolayısıyla kurumun önce sisteme alınması gerekir. Alan adı tanımlamak
+`scripts/register_domain.py` ile yapılan bir **yönetici işidir** — bir e-posta adresinin
+kendi kendine karar verebileceği bir şey değil. Akademik alan adı için yöntem otomatik
+`academic_domain` olur; kurumsal alan adı `--method` verilmeden **reddedilir**.
+
+#### Posta altyapısı yok — ve bu gizlenmiyor
+
+Doğrulama bağlantısı uygulama **loguna** yazılır (geliştirme mailer'ının yaptığı şey) ve
+`scripts/verify_email.py` ile konsoldan tamamlanır. Token'ı HTTP yanıtında geri vermek
+bilinçli olarak yapılmadı: onu isteyene geri vermek, kontrolün kendisini anlamsız kılardı.
+`_deliver_verification()` gerçek bir gönderici geldiğinde değişecek **tek** yerdir.
+
+`verify_email.py` "bu adresi doğrulanmış say" kısayolu **sunmaz**. Kontrolün bütün değeri
+birinin o adreste posta alabildiğinin gösterilmesidir; bunu atlayan bir konsol bayrağı
+sessizce hesapların açılma yolu hâline gelirdi.
+
+#### Yazma sınırı: "yapıyı bozmadan" bir grant'tır, Teamül değil
+
+`tenant_session` artık işlemi **`libraryhub_tenant_app`** rolüne düşürür. `libraryhub_app`
+her iki role de üyedir ve birleşimini miras alır; kiracıya özel işlem global yazmayı
+taşımamalıdır. `SET LOCAL ROLE` **eklemez, değiştirir** — dolayısıyla o işlemin içinde
+`public.works`'a INSERT yapmak PostgreSQL tarafından reddedilir.
+
+Ölçüldü (`run_scale_checks.py`, 5 kontrol): tenant rolü `public.works` üzerinde
+INSERT/UPDATE/DELETE ve `control.users` INSERT ile `control.sessions` DELETE için
+**`permission denied`** alıyor. Yarının bir ucu kendini unutursa paylaşılan bibliyografik
+kaydı sessizce değiştirmez, hata alır.
+
+**Kiracının yazabildikleri:** `tenant.holdings`, `tenant.items`, `tenant.locations`.
+**Yazamadıkları:** Work / Expression / Manifestation — bunlar ortak kayıttır ve değişiklik
+**öneri** yoluyla, bir yöneticinin incelemesiyle olacaktır (bir sonraki aşama).
+
+**`tenant_id` asla istekten gelmez.** Payload şemalarında böyle bir alan yok; kimliği
+doğrulanmış hesaptan alınır ve politikanın `WITH CHECK` tarafı da ayrıca reddeder.
+
+#### Kendi kendine yetki dağıtılmasına karşı
+
+Kayıt artık herkese açık olduğu için INSERT'in kendisi kısıtlanmalı. `control.users`
+üzerinde bir tetikleyici, **uygulama rolleri için** `role='admin'` atanmasını ve zaten
+doğrulanmış bir hesap oluşturulmasını engeller. Tetikleyici yalnızca uygulama rolleri için
+çalışır; `create_user.py` sahip kimliğiyle çalışır ve kısıtsızdır — yöneticinin yönetici
+açması olağan durumdur.
+
+#### Yeni uçlar
+
+`POST /auth/register`, `POST /auth/verify-email`, `POST /auth/resend-verification`,
+`POST /tenant/holdings`, `PATCH /tenant/holdings/{id}`, `POST /tenant/items`,
+`PATCH /tenant/items/{id}`.
+
+#### Kanıt — canlı API üzerinden
+
+| Kontrol | Sonuç |
+|---|---|
+| `@gmail.com` ile kayıt | **400** "Ücretsiz e-posta adresleri kabul edilmiyor" |
+| Tanımsız `@baskabiruni.edu.tr` | **403** "alan adı sistemde bir kuruluşa tanımlı değil" |
+| `@kku.edu.tr` ile kayıt | **202**, `account_kind=institutional`, kurum Kırıkkale |
+| Doğrulanmadan giriş | **403** "E-posta adresi henüz doğrulanmamış" |
+| Doğrulama sonrası giriş | **200**, rol `librarian` |
+| Aynı token'ı tekrar kullanma | **400** |
+| Holding oluştur / nüsha oluştur / nüsha düzelt | **201 / 201 / 200** |
+| Aynı `local_holding_key` tekrarı | **409** `uq_holdings_branch_manifestation_key` |
+| Geçersiz `holding_type` / exclusive arc ihlali | **422** `ck_holdings_target_exactly_one` |
+| Aynı barkod, aynı tenant | **409** `uq_items_tenant_barcode` |
+| **Aynı barkod, farklı tenant** | **kabul edildi** (OD3) |
+| Başka tenant'ın nüshasını/ holding'ini PATCH | **404** |
+| Başka tenant'ın holding'ine nüsha ekleme | **404** |
+| Başka tenant'ın şubesine holding ekleme | **404** |
+| Tenant rolüyle global plane'e yazma (5 deyim) | **hepsi `permission denied`** |
+
+**Test paketi 51 → 72** (21 yeni; alan adı kuralları, kayıt, doğrulama, token tekrarı,
+süre aşımı, yeniden gönderim, doğrulanmadan giriş).
+
+#### Bulunan gerçek hatalar
+
+1. **`SET LOCAL` işlem kapsamlı olduğu için `db.commit()` sonrası kapsam sıfırlanıyordu.**
+   Endpoint commit ettikten sonra okuduğunda rol ve tenant bağlaması kayboluyordu; RLS
+   fail-closed olduğu için belirti **sızıntı değil boş sonuçtu** — yani gözden kaçmaya en
+   yatkın türden. `after_begin` olayına bağlanarak kapsam işlem yerine **oturumun** özelliği
+   hâline getirildi.
+2. **psycopg3 `pgcode` değil `sqlstate` sunuyor.** Kısıt eşlemesi sessizce tutmuyor ve genel
+   bir mesaja düşüyordu; hata "başka bir yerde bir sorun var" gibi görünüyordu. İkisi de
+   okunuyor ve artık kısıt ihlalleri **loglanıyor** — dostça bir cümleye indirgenen bir hata
+   yine de teşhis edilebilir olmalı.
+3. **`"a b@c.com"` kurumsal sayılıyordu** — yerel kısımdaki boşluk kontrol edilmiyordu.
+   Kimsenin posta alamayacağı bir adres, doğrulama bağlantısının arkasına konmuş olurdu.
+
+Ayrıca ölçüm hatalarımı da not ediyorum: PowerShell değişkenleri büyük/küçük harf duyarsız
+olduğu için `$h` (holding) `$H` (header) değişkenimi ezdi ve bir tur testi geçersiz kıldı;
+`docker compose logs --tail=80` doğrulama satırını yakalayamadı ve "token loglanmıyor"
+yanılgısına yol açtı. İkisinde de sonucu doğrulayıp düzelttim.
+
+#### Açık kalanlar
+
+1. **Admin paneli yok** — kullanıcının istediği panel bir sonraki aşamanın işi. Veri
+   yönetimi şu an API üzerinden yapılabiliyor.
+2. **Global plane değişiklikleri için öneri mekanizması yazılmadı.** Kiracı global kaydı
+   değiştiremiyor (bu doğru), ama değiştirmek istediğinde ne olacağı henüz tanımlı değil.
+3. **`control.branches` üzerinde RLS yok.** Yabancı bir şubeye holding eklenmesi FK
+   tarafından engellenmiyor (FK satırın var olduğunu doğrular, sizin olduğunu değil), bu
+   yüzden `_assert_branch_is_ours` kontrolü uygulama kodunda duruyor. Doğru yer politika.
+4. **`libraryhub_tenant_app` bazı kimlik tablolarında hâlâ `SELECT` tutuyor**
+   (`email_verifications`, `organization_domains`) — şema geneli varsayılan yetkiden geliyor.
+   Yalnızca özet görülebiliyor, ama kiracı işleminin kimlik tablolarına hiç uzanamaması
+   gerekir.
+5. `status.HTTP_422_UNPROCESSABLE_ENTITY` Starlette'te kullanımdan kaldırılmış; uyarı
+   veriyor, davranış doğru.
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman
