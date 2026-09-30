@@ -155,8 +155,13 @@ async function performSearch(query) {
             return;
         }
 
-        statusBox.textContent =
-            `${data.count} kayıt bulundu.`;
+        // The API caps the result set before duplicates are collapsed, so a
+        // full page means "there may be more". Saying so is better than letting
+        // the reader assume these are all the matches.
+        statusBox.textContent = data.truncated
+            ? `${data.count} kayıt bulundu (ilk ${data.count} gösteriliyor — ` +
+              `daha fazlası için arama terimini daraltın).`
+            : `${data.count} kayıt bulundu.`;
 
         resultsBox.innerHTML =
             data.results
@@ -224,61 +229,63 @@ document
    ESER DETAYI
 --------------------------------------------------------- */
 
-function renderDetailItems(items) {
-    if (!items || items.length === 0) {
+function renderDetailHoldings(holdings) {
+    if (!holdings || holdings.length === 0) {
         return "";
     }
 
-    return items.map(item => {
-        const institutions = item.holding_institutions || [];
+    const totalCopies = holdings.reduce(
+        (sum, holding) => sum + (holding.item_count || 0),
+        0
+    );
+
+    const rows = holdings.map(holding => {
+        const institution = holding.entity_id
+            ? `<button
+                   type="button"
+                   class="entity-link collective-agent-link"
+                   data-agent-id="${escapeHtml(holding.entity_id)}"
+               >${escapeHtml(holding.name)}</button>`
+            : `<span class="holding-unknown">Kurum kaydedilmemiş</span>`;
+
+        const availability = Object.entries(
+            holding.availability || {}
+        )
+            .map(([status, count]) => `
+                <span class="tag">
+                    ${escapeHtml(status)}: ${count}
+                </span>
+            `)
+            .join("");
 
         return `
-            <div class="detail-item">
-                <div class="detail-item-title">Kütüphane nüshası</div>
-
-                <div class="detail-grid">
-                    ${item.barcode ? `
-                        <div>
-                            <span>Barkod</span>
-                            <strong>${escapeHtml(item.barcode)}</strong>
-                        </div>
-                    ` : ""}
-
-                    ${item.shelfmark ? `
-                        <div>
-                            <span>Yer numarası</span>
-                            <strong>${escapeHtml(item.shelfmark)}</strong>
-                        </div>
-                    ` : ""}
-
-                    ${item.availability_status ? `
-                        <div>
-                            <span>Durum</span>
-                            <strong>${escapeHtml(item.availability_status)}</strong>
-                        </div>
-                    ` : ""}
-
-                    
-					${institutions.length ? `
-						<div>
-						<span>Kurum</span>
-						<strong>
-						${institutions.map(institution => `
-						<button
-						type="button"
-						class="entity-link collective-agent-link"
-						data-agent-id="${escapeHtml(institution.entity_id)}"
-						>
-											${escapeHtml(institution.name)}
-							</button>
-									`).join(", ")}
-										</strong>
-						</div>
-					` : ""}
+            <div class="holding-row">
+                <div class="holding-institution">
+                    ${institution}
                 </div>
-            
+
+                <div class="holding-count">
+                    ${holding.item_count} nüsha
+                </div>
+
+                <div class="holding-availability">
+                    ${availability}
+                </div>
+            </div>
         `;
     }).join("");
+
+    return `
+        <div class="detail-holdings">
+            <div class="detail-item-title">
+                ${totalCopies} nüsha · ${holdings.length} kurum
+            </div>
+
+            <div class="holdings-list">
+                ${rows}
+            </div>
+        </div>
+    `;
 }
 
 
@@ -344,7 +351,7 @@ function renderDetailManifestations(manifestations) {
 					</p>
 				` : ""}
 
-                ${renderDetailItems(manifestation.items)}
+                ${renderDetailHoldings(manifestation.holdings)}
             </div>
         `;
     }).join("");
@@ -886,33 +893,111 @@ async function openCollectiveAgent(agentId) {
 
 let lastSearchQuery = "";
 
-const navigationStack = [];
 let currentView = null;
-let isNavigatingBack = false;
+let isSyncingHash = false;
 
 const originalPerformSearch = performSearch;
 
 
-function rememberCurrentView() {
-    if (isNavigatingBack || !currentView) {
-        return;
+/*
+    Adres (hash) tek doğruluk kaynağıdır.
+
+    Gezinme önceden yalnızca bellekteki bir yığında tutuluyordu; tarayıcının
+    geri tuşu, sayfayı yenileme ve bir kaydın bağlantısını paylaşma
+    çalışmıyordu. Artık her görünümün bir adresi var ve tarayıcının kendi
+    geçmişi yığın görevi görüyor. Bkz. docs/architecture-v2.md §0.12.
+*/
+
+function viewToHash(view) {
+    if (!view) {
+        return "#/";
     }
 
-    navigationStack.push({
-        ...currentView
-    });
+    switch (view.type) {
+        case "search":
+            return `#/search/${encodeURIComponent(view.query)}`;
+
+        case "work":
+            return `#/work/${view.id}`;
+
+        case "person":
+            return `#/person/${view.id}`;
+
+        case "concept":
+            return `#/concept/${view.id}`;
+
+        case "collective-agent":
+            return `#/agent/${view.id}`;
+
+        default:
+            return "#/";
+    }
 }
 
 
-async function showSearch(query, addToHistory = true) {
+function parseHash() {
+    const raw = window.location.hash.replace(/^#\/?/, "");
+
+    if (!raw) {
+        return null;
+    }
+
+    const parts = raw.split("/");
+    const kind = parts.shift();
+    const value = decodeURIComponent(parts.join("/"));
+
+    if (!value) {
+        return null;
+    }
+
+    if (kind === "search") {
+        return { type: "search", query: value };
+    }
+
+    if (kind === "work") {
+        return { type: "work", id: value };
+    }
+
+    if (kind === "person") {
+        return { type: "person", id: value };
+    }
+
+    if (kind === "concept") {
+        return { type: "concept", id: value };
+    }
+
+    if (kind === "agent") {
+        return { type: "collective-agent", id: value };
+    }
+
+    return null;
+}
+
+
+function syncHash() {
+    const target = viewToHash(currentView);
+
+    if (window.location.hash !== target) {
+        isSyncingHash = true;
+        window.location.hash = target;
+    }
+}
+
+
+function showHome() {
+    currentView = null;
+    searchInput.value = "";
+    statusBox.textContent =
+        "Aramaya başlamak için yukarıdaki kutuyu kullanın.";
+    resultsBox.innerHTML = "";
+}
+
+
+async function showSearch(query) {
     const cleanQuery = query.trim();
 
     if (!cleanQuery) {
         return;
-    }
-
-    if (addToHistory) {
-        rememberCurrentView();
     }
 
     lastSearchQuery = cleanQuery;
@@ -923,128 +1008,126 @@ async function showSearch(query, addToHistory = true) {
         type: "search",
         query: cleanQuery
     };
+
+    syncHash();
 }
 
 
-async function showWork(workId, addToHistory = true) {
-    if (addToHistory) {
-        rememberCurrentView();
-    }
-
+async function showWork(workId) {
     await openWorkDetail(workId);
 
     currentView = {
         type: "work",
         id: workId
     };
+
+    syncHash();
 }
 
 
-async function showPerson(personId, addToHistory = true) {
-    if (addToHistory) {
-        rememberCurrentView();
-    }
-
+async function showPerson(personId) {
     await openPerson(personId);
 
     currentView = {
         type: "person",
         id: personId
     };
+
+    syncHash();
 }
 
 
-async function showConcept(conceptId, addToHistory = true) {
-    if (addToHistory) {
-        rememberCurrentView();
-    }
-
+async function showConcept(conceptId) {
     await openConcept(conceptId);
 
     currentView = {
         type: "concept",
         id: conceptId
     };
+
+    syncHash();
 }
 
 
-async function showCollectiveAgent(
-    agentId,
-    addToHistory = true
-) {
-    if (addToHistory) {
-        rememberCurrentView();
-    }
-
+async function showCollectiveAgent(agentId) {
     await openCollectiveAgent(agentId);
 
     currentView = {
         type: "collective-agent",
         id: agentId
     };
+
+    syncHash();
+}
+
+
+async function renderView(view) {
+    if (!view) {
+        showHome();
+        return;
+    }
+
+    if (view.type === "search") {
+        await showSearch(view.query);
+    }
+
+    else if (view.type === "work") {
+        await showWork(view.id);
+    }
+
+    else if (view.type === "person") {
+        await showPerson(view.id);
+    }
+
+    else if (view.type === "concept") {
+        await showConcept(view.id);
+    }
+
+    else if (view.type === "collective-agent") {
+        await showCollectiveAgent(view.id);
+    }
+
+    else {
+        showHome();
+    }
 }
 
 
 async function goBack() {
-    if (navigationStack.length === 0) {
-        if (lastSearchQuery) {
-            await showSearch(
-                lastSearchQuery,
-                false
-            );
-        }
-
+    // Adres tek doğruluk kaynağı olduğu için yığın artık tarayıcının kendi
+    // geçmişidir.
+    if (window.history.length > 1) {
+        window.history.back();
         return;
     }
 
-    const previousView =
-        navigationStack.pop();
-
-    isNavigatingBack = true;
-
-    try {
-        if (previousView.type === "search") {
-            await showSearch(
-                previousView.query,
-                false
-            );
-        }
-
-        else if (previousView.type === "work") {
-            await showWork(
-                previousView.id,
-                false
-            );
-        }
-
-        else if (previousView.type === "person") {
-            await showPerson(
-                previousView.id,
-                false
-            );
-        }
-
-        else if (previousView.type === "concept") {
-            await showConcept(
-                previousView.id,
-                false
-            );
-        }
-
-        else if (
-            previousView.type === "collective-agent"
-        ) {
-            await showCollectiveAgent(
-                previousView.id,
-                false
-            );
-        }
-    }
-
-    finally {
-        isNavigatingBack = false;
-    }
+    window.location.hash = "";
 }
+
+
+window.addEventListener(
+    "hashchange",
+    async () => {
+        // syncHash() tarafından yazılan değişiklikleri yok say; aksi hâlde
+        // her gezinme kendini yeniden tetikler.
+        if (isSyncingHash) {
+            isSyncingHash = false;
+            return;
+        }
+
+        await renderView(parseHash());
+    }
+);
+
+
+window.addEventListener(
+    "load",
+    async () => {
+        if (window.location.hash) {
+            await renderView(parseHash());
+        }
+    }
+);
 
 
 /*

@@ -160,6 +160,15 @@ body {
     margin: 0 0 6px;
     color: var(--primary);
     font-size: 22px;
+
+    /* Tek bir anormal başlık sonuç listesini ele geçirmemeli: 3000 karakterlik
+       bir kayıt kartı yüzlerce piksel şişiriyordu. Görünümü kırp ve uzun
+       kesintisiz dizileri böl ki hiçbir şey taşmasın. */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
 }
 
 .original-title {
@@ -388,7 +397,9 @@ footer {
     font-size: 16px;
 }
 
-.detail-item {
+/* Nüsha listesi yerine kurum özeti: global eser sayfası kiracı verisini
+   (barkod, raf yeri) listelemek yerine "kim tutuyor" sorusunu yanıtlar. */
+.detail-holdings {
     margin-top: 16px;
     background: #f5f7fa;
     padding: 16px;
@@ -400,26 +411,49 @@ footer {
     margin-bottom: 12px;
 }
 
-.detail-grid {
-    display: grid;
-    grid-template-columns:
-        repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
-}
-
-.detail-grid div {
+.holdings-list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 8px;
 }
 
-.detail-grid span {
+.holding-row {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) auto minmax(0, 2fr);
+    gap: 12px;
+    align-items: center;
+    padding: 8px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+.holding-institution {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.holding-count {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 13px;
+    white-space: nowrap;
 }
 
-.detail-grid strong {
-    font-size: 14px;
+.holding-availability {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.holding-unknown {
+    color: var(--muted);
+    font-style: italic;
+}
+
+@media (max-width: 650px) {
+    .holding-row {
+        grid-template-columns: 1fr;
+    }
 }
 
 .empty-detail {
