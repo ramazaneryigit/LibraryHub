@@ -177,36 +177,52 @@ def check_barcode_uniqueness(owner) -> None:
     )
 
 
-def check_view_agrees(owner) -> None:
-    legacy = owner.execute(
-        text("select count(*) from public.items")
-    ).scalar()
+def check_view_covers_tenant_plane(owner) -> None:
+    """The projection still shows every copy, now that it has no legacy branch.
+
+    Before Aşama 6 this compared the view against `public.items` to prove the
+    migration had carried everything across. That table is gone, so the question
+    is the one that matters afterwards: is anything in the tenant plane missing
+    from the global read?
+    """
+
     compat = owner.execute(
         text("select count(*) from public.items_compat")
     ).scalar()
 
-    record(
-        "Uyumluluk gorunumu legacy item sayisini koruyor",
-        compat >= legacy,
-        f"public.items={legacy}, items_compat={compat}",
-    )
-
-    unresolved = owner.execute(
+    missing = owner.execute(
         text(
             """
-            select count(*)
-            from public.items li
-            where not exists (
-                select 1 from public.items_compat v where v.entity_id = li.entity_id
+            SELECT count(*)
+            FROM tenant.items ti
+            WHERE NOT EXISTS (
+                SELECT 1 FROM public.items_compat v
+                WHERE v.entity_id = COALESCE(ti.legacy_entity_id, ti.id)
             )
             """
         )
     ).scalar()
 
     record(
-        "Her legacy item gorunumde temsil ediliyor",
-        unresolved == 0,
-        f"temsil edilmeyen: {unresolved}",
+        "Projeksiyon her nushayi gosteriyor",
+        missing == 0,
+        f"gorunum={compat}, eksik={missing}",
+    )
+
+    without_institution = owner.execute(
+        text(
+            """
+            SELECT count(*)
+            FROM public.items_compat
+            WHERE holding_institution_entity_id IS NULL
+            """
+        )
+    ).scalar()
+
+    record(
+        "Projeksiyonda kurumsuz nusha yok",
+        without_institution == 0,
+        f"kurumsuz: {without_institution}",
     )
 
 
@@ -346,129 +362,51 @@ def check_tenant_role_jail(app) -> None:
             )
 
 
-def check_phase6_readiness(owner) -> None:
-    """What still stands between here and dropping the legacy item tables.
+def check_legacy_retirement(owner) -> None:
+    """The legacy item plane is gone, not merely unused.
 
-    Aşama 6 removes `public.items`, `manifestation_item` and `item_agent_relation`,
-    and drops `'ITEM'` from the `entities.entity_type` check. That is only safe
-    once every row has a home in the tenant plane and no surviving record still
-    points at an entity of that type.
-
-    Measuring it beats assuming it: the point of writing this down is that "we
-    think the migration is complete" and "every row is accounted for" are
-    different claims, and only the second one is checkable.
+    Before Aşama 6 these checks asked whether anything was still in the way. Now
+    they ask whether it actually went -- a different question, and the one that
+    can still fail quietly if a table survives a migration that was supposed to
+    drop it.
     """
 
-    missing_items = owner.execute(
-        text(
-            """
-            SELECT count(*)
-            FROM public.items i
-            WHERE NOT EXISTS (
-                SELECT 1 FROM tenant.items ti
-                WHERE ti.legacy_entity_id = i.entity_id
-            )
-            """
+    for table in ("items", "manifestation_item", "item_agent_relation"):
+        remaining = owner.execute(
+            text("SELECT to_regclass(:name)"),
+            {"name": f"public.{table}"},
+        ).scalar()
+
+        record(
+            f"Asama 6: public.{table} dustu",
+            remaining is None,
+            f"kalan: {remaining}" if remaining else "yok",
         )
+
+    item_entities = owner.execute(
+        text("SELECT count(*) FROM entities WHERE entity_type = 'ITEM'")
     ).scalar()
 
     record(
-        "Asama 6: her legacy item tenant plane'inde karsiligi var",
-        missing_items == 0,
-        f"karsiligi olmayan: {missing_items}",
+        "Asama 6: ITEM entity kalmadi",
+        item_entities == 0,
+        f"kalan ITEM entity: {item_entities}",
     )
 
-    unrepresented = owner.execute(
+    allows_item = owner.execute(
         text(
             """
-            SELECT count(*)
-            FROM manifestation_item mi
-            LEFT JOIN tenant.items ti
-                   ON ti.legacy_entity_id = mi.item_entity_id
-            LEFT JOIN tenant.holdings th ON th.id = ti.holding_id
-            WHERE ti.id IS NULL
-               OR th.manifestation_entity_id
-                  IS DISTINCT FROM mi.manifestation_entity_id
+            SELECT pg_get_constraintdef(oid) LIKE '%ITEM%'
+            FROM pg_constraint
+            WHERE conname = 'ck_entities_entity_type'
             """
         )
     ).scalar()
 
     record(
-        "Asama 6: manifestation_item holding'lerde temsil ediliyor",
-        unrepresented == 0,
-        f"temsil edilmeyen: {unrepresented}",
-    )
-
-    # Ownership used to live in a relation table. In the new model it is
-    # structural -- item -> holding -> branch -> organization -- so the relation
-    # only has to agree with what the structure already says.
-    disagreeing = owner.execute(
-        text(
-            """
-            SELECT count(*)
-            FROM item_agent_relation iar
-            JOIN tenant.items ti ON ti.legacy_entity_id = iar.item_entity_id
-            JOIN tenant.holdings th ON th.id = ti.holding_id
-            JOIN control.branches b ON b.id = th.branch_id
-            JOIN control.organizations o ON o.id = b.organization_id
-            WHERE iar.role = 'holding_institution'
-              AND o.collective_agent_entity_id
-                  IS DISTINCT FROM iar.agent_entity_id
-            """
-        )
-    ).scalar()
-
-    record(
-        "Asama 6: kurum aidiyeti yapidan turetilebiliyor",
-        disagreeing == 0,
-        f"celisen satir: {disagreeing}",
-    )
-
-    stray_entities = owner.execute(
-        text(
-            """
-            SELECT count(*)
-            FROM entities e
-            WHERE e.entity_type = 'ITEM'
-              AND NOT EXISTS (
-                  SELECT 1 FROM public.items i WHERE i.entity_id = e.id
-              )
-            """
-        )
-    ).scalar()
-
-    record(
-        "Asama 6: public.items'ta karsiligi olmayan ITEM entity yok",
-        stray_entities == 0,
-        f"basi bos ITEM entity: {stray_entities}",
-    )
-
-    # The hard blocker: dropping 'ITEM' from the check constraint fails if any
-    # surviving row still names an entity of that type.
-    referenced = owner.execute(
-        text(
-            """
-            SELECT
-                (SELECT count(*)
-                   FROM entity_merges em
-                  WHERE EXISTS (
-                      SELECT 1 FROM entities e
-                       WHERE e.entity_type = 'ITEM'
-                         AND e.id IN (em.source_entity_id, em.target_entity_id)))
-              + (SELECT count(*)
-                   FROM entity_relation er
-                  WHERE EXISTS (
-                      SELECT 1 FROM entities e
-                       WHERE e.entity_type = 'ITEM'
-                         AND e.id IN (er.subject_entity_id, er.object_entity_id)))
-            """
-        )
-    ).scalar()
-
-    record(
-        "Asama 6: ITEM entity'ye bakan merge/relation yok",
-        referenced == 0,
-        f"engelleyen kayit: {referenced}",
+        "Asama 6: entity_type artik ITEM kabul etmiyor",
+        allows_item is False,
+        "CHECK hala ITEM iceriyor" if allows_item else "temiz",
     )
 
 
@@ -685,7 +623,7 @@ def main() -> int:
         print("\n-- butunluk --")
         check_no_orphans(owner)
         check_barcode_uniqueness(owner)
-        check_view_agrees(owner)
+        check_view_covers_tenant_plane(owner)
 
         print("\n-- index ve plan --")
         check_indexes(owner)
@@ -697,9 +635,9 @@ def main() -> int:
         check_tenant_role_jail(app)
         check_branch_guard(owner, app)
 
-        print("\n-- Asama 6 hazirligi --")
+        print("\n-- Asama 6 dogrulamasi --")
         check_legacy_item_surface()
-        check_phase6_readiness(owner)
+        check_legacy_retirement(owner)
 
     failed = [name for name, passed, _ in results if not passed]
     print()

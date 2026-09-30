@@ -48,6 +48,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -632,5 +633,79 @@ class TenantChangeProposal(Base):
         DateTime(timezone=True),
         default=utcnow,
         onupdate=utcnow,
+        nullable=False,
+    )
+
+
+class TenantItemIdentifier(Base):
+    """An identifier belonging to one copy.
+
+    A copy used to be a global entity, and its identifiers lived in the global
+    `identifiers` table with everything else. It is not an entity any more, so
+    they live here, next to the copy -- which is also where they belonged: a
+    national library number for a specific volume is the holding institution's
+    record of its own object, not a fact about the work.
+
+    This table exists because Aşama 6 found three such rows still pointing at
+    ITEM entities, two of them the only identifier their copy had. They are
+    migrated in rather than cascaded away. See docs/architecture-v2.md §0.18.
+    """
+
+    __tablename__ = "item_identifiers"
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["item_id"],
+            [f"{TENANT_SCHEMA}.items.id"],
+            name="fk_item_identifiers_item",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "scheme",
+            "value",
+            name="uq_item_identifiers_tenant_scheme_value",
+        ),
+        Index("ix_item_identifiers_item", "item_id"),
+        {"schema": TENANT_SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid7,
+    )
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        nullable=False,
+    )
+
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        nullable=False,
+    )
+
+    scheme: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    value: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+
+    qualifier: Mapped[str | None] = mapped_column(
+        String(300),
+        nullable=True,
+    )
+
+    preferred: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
         nullable=False,
     )

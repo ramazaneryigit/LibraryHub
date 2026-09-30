@@ -438,7 +438,7 @@ class Entity(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "entity_type IN ('PERSON', 'ORGANIZATION', 'CONCEPT', 'WORK', 'EXPRESSION', 'MANIFESTATION', 'ITEM', 'PLACE', 'TIME_SPAN', 'CLASSIFICATION')",
+            "entity_type IN ('PERSON', 'ORGANIZATION', 'CONCEPT', 'WORK', 'EXPRESSION', 'MANIFESTATION', 'PLACE', 'TIME_SPAN', 'CLASSIFICATION')",
             name="ck_entities_entity_type",
         ),
     )
@@ -678,40 +678,6 @@ class Manifestation(Base):
     )
 
 
-class Item(Base):
-    __tablename__ = "items"
-
-    entity_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("entities.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-
-    barcode: Mapped[str | None] = mapped_column(
-        String(200),
-        nullable=True,
-    )
-
-    shelfmark: Mapped[str | None] = mapped_column(
-        String(300),
-        nullable=True,
-    )
-
-    condition: Mapped[str | None] = mapped_column(
-        String(200),
-        nullable=True,
-    )
-
-    availability_status: Mapped[str | None] = mapped_column(
-        String(100),
-        nullable=True,
-    )
-
-    notes: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-    )
-
-
 class Person(Base):
     __tablename__ = "persons"
 
@@ -920,21 +886,6 @@ class ExpressionManifestation(Base):
     )
 
 
-class ManifestationItem(Base):
-    __tablename__ = "manifestation_item"
-
-    manifestation_entity_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("manifestations.entity_id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-
-    item_entity_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("items.entity_id", ondelete="CASCADE"),
-        primary_key=True,
-        unique=True,
-    )
-
-
 class WorkAgentRelation(Base):
     __tablename__ = "work_agent_relation"
 
@@ -978,25 +929,6 @@ class ManifestationAgentRelation(Base):
 
     manifestation_entity_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("manifestations.entity_id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-
-    agent_entity_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("entities.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-
-    role: Mapped[str] = mapped_column(
-        String(100),
-        primary_key=True,
-    )
-
-
-class ItemAgentRelation(Base):
-    __tablename__ = "item_agent_relation"
-
-    item_entity_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("items.entity_id", ondelete="CASCADE"),
         primary_key=True,
     )
 
@@ -1732,5 +1664,6 @@ from .tenant_models import (  # noqa: E402,F401
     TenantChangeProposal,
     TenantHolding,
     TenantItem,
+    TenantItemIdentifier,
     TenantLocation,
 )

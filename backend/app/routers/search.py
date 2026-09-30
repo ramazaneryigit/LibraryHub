@@ -224,7 +224,12 @@ def search(
       ON item.manifestation_entity_id = manifestation.entity_id
 
     -- Item tanımlayıcıları
-    LEFT JOIN identifiers item_identifier
+    --
+    -- A copy is not a global entity any more, so its identifiers are not in
+    -- `identifiers`. `public.item_identifiers` is the global read of the ones
+    -- that live in the tenant plane, and it exposes the same `entity_id` the
+    -- line above produced, so the join below reads exactly as it did.
+    LEFT JOIN public.item_identifiers item_identifier
       ON item_identifier.entity_id = item.entity_id
 
     WHERE
