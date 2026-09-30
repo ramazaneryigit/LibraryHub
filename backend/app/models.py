@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    event,
     Float,
     ForeignKey,
     Index,
@@ -19,10 +20,84 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
+from .ids import uuid7
+from .normalization import normalize_text
 
 
 def utcnow():
     return datetime.now(timezone.utc)
+
+class SourceSystem(Base):
+    """Registry of systems that supply data to LibraryHub.
+
+    Provenance policy lives here: `trust_level` records how much a source's
+    assertions should weigh during reconciliation. Deliberately separate from
+    SourceRecord: one system has many records. See docs/architecture-v2.md §6.
+    """
+
+    __tablename__ = "source_systems"
+
+    __table_args__ = (
+        Index(
+            "ix_source_systems_code",
+            "code",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid7,
+    )
+
+    code: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+
+    system_type: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    trust_level: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=50,
+    )
+
+    license: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    attribution: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    base_url: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+
 
 class SourceRecord(Base):
     __tablename__ = "source_records"
@@ -42,12 +117,24 @@ class SourceRecord(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     source_system: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
+    )
+
+    # Structured link to the source registry. Nullable on purpose: existing
+    # rows keep working through the legacy `source_system` string and are
+    # backfilled in a later phase (docs/architecture-v2.md §16, Aşama 2).
+    source_system_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "source_systems.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
     )
 
     source_record_id: Mapped[str] = mapped_column(
@@ -123,7 +210,7 @@ class ReconciliationCandidate(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     source_record_id: Mapped[uuid.UUID] = mapped_column(
@@ -188,7 +275,7 @@ class ReconciliationDecision(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     source_record_id: Mapped[uuid.UUID] = mapped_column(
@@ -288,7 +375,7 @@ class EntityMerge(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     source_entity_id: Mapped[uuid.UUID] = mapped_column(
@@ -358,7 +445,7 @@ class Entity(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     entity_type: Mapped[str] = mapped_column(
@@ -397,7 +484,7 @@ class Identifier(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     entity_id: Mapped[uuid.UUID] = mapped_column(
@@ -436,6 +523,40 @@ class Identifier(Base):
 class Work(Base):
     __tablename__ = "works"
 
+    __table_args__ = (
+        # Declared with text() so Alembic can see this expression index.
+        # The index itself is created by migration 9f25b0d7306d using raw SQL.
+        # Without this declaration `alembic check` reports it as a removed
+        # index and the next `revision --autogenerate` would silently drop it.
+        #
+        # Known limitation: the operator class is part of the expression, so
+        # Alembic logs "Cannot compare index ... assuming equal and skipping"
+        # for this one index instead of comparing it. `alembic check` stays
+        # clean and the index is protected from being dropped, but a future
+        # divergence in its definition would not be detected. SQLAlchemy 2.0
+        # looks up postgresql_ops by element key, and text()/func() expression
+        # elements have key=None, so an exact compare is not achievable here.
+        # See docs/architecture-v2.md §15.3.
+        #
+        # ddl_if(dialect="postgresql") is required, not cosmetic: SQLite has no
+        # operator classes, and without this filter Base.metadata.create_all()
+        # emits invalid DDL on the in-memory SQLite engine the test suite uses.
+        Index(
+            "ix_works_canonical_title_lower_trgm",
+            text("lower(canonical_title) gin_trgm_ops"),
+            postgresql_using="gin",
+        ).ddl_if(dialect="postgresql"),
+        # The index that actually serves matching: works.normalized_title is
+        # filled by the ORM event below with app.normalization.normalize_text,
+        # so the stored value and the probe value are normalized identically.
+        # See docs/architecture-v2.md §15.6.
+        Index(
+            "ix_works_normalized_title_trgm",
+            text("normalized_title gin_trgm_ops"),
+            postgresql_using="gin",
+        ).ddl_if(dialect="postgresql"),
+    )
+
     entity_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("entities.id", ondelete="CASCADE"),
         primary_key=True,
@@ -444,6 +565,14 @@ class Work(Base):
     canonical_title: Mapped[str] = mapped_column(
         String(1000),
         nullable=False,
+    )
+
+    # Derived from canonical_title by the event listener below; never set by
+    # hand. Nullable because a title with no normalizable content (for example
+    # only punctuation) normalizes to None and is legitimately not comparable.
+    normalized_title: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
     )
 
     original_title: Mapped[str | None] = mapped_column(
@@ -471,6 +600,19 @@ class Work(Base):
         default=utcnow,
         nullable=False,
     )
+
+
+@event.listens_for(Work, "before_insert")
+@event.listens_for(Work, "before_update")
+def _sync_normalized_title(mapper, connection, target) -> None:
+    """Keep works.normalized_title derived from canonical_title.
+
+    Hanging this off the model instead of the router covers every write path --
+    the API, the seed scripts, ingestion and anything added later -- so the
+    column cannot silently drift from the title it is derived from.
+    """
+
+    target.normalized_title = normalize_text(target.canonical_title)
 
 
 class Expression(Base):
@@ -637,7 +779,7 @@ class Nomen(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     entity_id: Mapped[uuid.UUID] = mapped_column(
@@ -879,11 +1021,22 @@ class EntityRelation(Base):
             "object_entity_id",
             name="uq_entity_relation_subject_predicate_object",
         ),
+        # Reverse direction. The unique constraint above is led by
+        # subject_entity_id, so object-side lookups (concept hierarchy
+        # traversal, relation listing, merge rewrites) cannot seek with it.
+        # Measured ~440x slower without this index; see
+        # docs/architecture-v2.md §15.1.
+        Index(
+            "ix_entity_relation_object_predicate_subject",
+            "object_entity_id",
+            "predicate",
+            "subject_entity_id",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     subject_entity_id: Mapped[uuid.UUID] = mapped_column(
@@ -912,7 +1065,7 @@ class RelationPredicate(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     code: Mapped[str] = mapped_column(
@@ -976,7 +1129,7 @@ class RelationPredicateConstraint(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     predicate_id: Mapped[uuid.UUID] = mapped_column(
@@ -1008,7 +1161,7 @@ class VocabularyScheme(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     code: Mapped[str] = mapped_column(
@@ -1047,7 +1200,7 @@ class VocabularySchemeEdition(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     scheme_id: Mapped[uuid.UUID] = mapped_column(
@@ -1170,7 +1323,7 @@ class WorkClassification(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     work_entity_id: Mapped[uuid.UUID] = mapped_column(
@@ -1213,7 +1366,7 @@ class ClassificationMapping(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     source_classification_entity_id: Mapped[uuid.UUID] = mapped_column(
@@ -1338,7 +1491,7 @@ class SourceClassification(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     work_entity_id: Mapped[uuid.UUID] = mapped_column(
@@ -1417,7 +1570,7 @@ class ClassificationValidation(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     source_classification_id: Mapped[uuid.UUID] = mapped_column(
@@ -1497,7 +1650,7 @@ class IngestionBatch(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid7,
     )
 
     source_system: Mapped[str] = mapped_column(
@@ -1559,3 +1712,22 @@ class IngestionBatch(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+
+
+# Control Plane tables live in a separate module (they are a different plane),
+# but they must be part of the same metadata so that Alembic autogenerate and
+# Base.metadata.create_all see a complete picture. Imported for registration
+# side effects only. See docs/architecture-v2.md §1.2.
+from .control_models import (  # noqa: E402,F401
+    Branch,
+    Organization,
+    Tenant,
+    TenantDatabase,
+    User,
+    UserSession,
+)
+from .tenant_models import (  # noqa: E402,F401
+    TenantHolding,
+    TenantItem,
+    TenantLocation,
+)

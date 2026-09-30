@@ -23,6 +23,30 @@ services:
       retries: 10
 
 
+  # One-shot schema migration. It uses the schema owner credential because only
+  # that role has DDL rights, and it has to finish before the API starts: one of
+  # the migrations creates the non-superuser role the API connects as.
+  migrate:
+    build:
+      context: ./backend
+
+    container_name: libraryhub-migrate
+    restart: "no"
+
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      APP_DATABASE_URL: postgresql+psycopg://${APP_DB_USER}:${APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
+
+    volumes:
+      - ./backend:/app
+
+    command: ["alembic", "upgrade", "head"]
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+
   api:
     build:
       context: ./backend
@@ -31,7 +55,12 @@ services:
     restart: unless-stopped
 
     environment:
-      DATABASE_URL: postgresql+psycopg://library:library_dev_password@postgres:5432/libraryhub
+      # Owner credential. Kept only so a one-off `docker compose exec api
+      # alembic ...` works; the application itself reads APP_DATABASE_URL.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Runtime credential: a non-superuser role, so row level security on the
+      # tenant schema actually applies.
+      APP_DATABASE_URL: postgresql+psycopg://${APP_DB_USER}:${APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
 
     ports:
       - "8010:8000"
@@ -42,6 +71,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 
 volumes:

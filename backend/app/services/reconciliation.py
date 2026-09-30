@@ -1,7 +1,4 @@
-import re
-import unicodedata
-
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 from difflib import SequenceMatcher
 
@@ -13,6 +10,7 @@ from ..models import (
     Work,
     WorkExpression,
 )
+from ..normalization import normalize_text
 from .entity_merge import resolve_canonical_entity_id
 from .reconciliation_freshness import METHOD, capture_inputs
 
@@ -26,35 +24,6 @@ EVALUATION_AMBIGUOUS_MARGIN_BELOW = 0.05
 EVALUATION_STRONG_MARGIN_AT_LEAST = 0.15
 EVALUATION_STRONG_TOP_SCORE_AT_LEAST = 0.90
 EVALUATION_WEAK_TOP_SCORE_BELOW = 0.75
-
-
-def normalize_text(value: str | None) -> str | None:
-    if value is None:
-        return None
-
-    normalized = unicodedata.normalize(
-        "NFKD",
-        value.casefold(),
-    )
-
-    normalized = "".join(
-        character
-        for character in normalized
-        if not unicodedata.combining(character)
-    )
-
-    normalized = re.sub(
-        r"[^\w\s]",
-        " ",
-        normalized,
-        flags=re.UNICODE,
-    )
-
-    normalized = " ".join(
-        normalized.split()
-    )
-
-    return normalized or None
 
 
 def compare_field(source_value, candidate_value) -> dict:
@@ -155,15 +124,37 @@ def retrieve_work_candidates(
     db: Session,
     source_title: str,
 ) -> list[Work]:
+    """Return Works whose title is trigram-similar to ``source_title``.
+
+    ``source_title`` must already be normalized (the caller runs it through
+    normalize_text) and ``works.normalized_title`` is filled by an ORM event
+    using that same function, so both sides of the comparison are like for
+    like. Before this, the database side used only ``lower()`` while the probe
+    was fully normalized, which cost an identical Turkish title 0.286 of
+    similarity (docs/architecture-v2.md §15.6).
+
+    Two things happen here and both matter at scale:
+
+    1. Blocking. pg_trgm's ``%`` operator is the only form its GIN index can
+       serve; ``similarity(...) >= t`` is a plain function call with no index
+       path, so without blocking every source record full-scans ``works`` --
+       measured at 823 ms for 200 000 rows (docs/architecture-v2.md §15.5).
+       SQLite has no such operator (``'abc' % 'x'`` is numeric modulo and
+       yields NULL), so it is applied on PostgreSQL only; the explicit
+       threshold below still decides the result set on every backend.
+
+    2. Ranking. ``similarity()`` is then computed only for surviving rows.
+    """
+
     similarity = func.similarity(
-        func.lower(Work.canonical_title),
+        Work.normalized_title,
         source_title,
     )
 
-    return db.scalars(
+    statement = (
         select(Work)
         .where(
-            Work.canonical_title.is_not(None),
+            Work.normalized_title.is_not(None),
             similarity >= WORK_TRIGRAM_THRESHOLD,
         )
         .order_by(
@@ -171,7 +162,25 @@ def retrieve_work_candidates(
             Work.entity_id,
         )
         .limit(WORK_RETRIEVAL_LIMIT)
-    ).all()
+    )
+
+    bind = db.get_bind()
+
+    if bind is not None and bind.dialect.name == "postgresql":
+        # Keep the operator's own threshold aligned with ours so that blocking
+        # can never be stricter than the filter that follows it.
+        # pg_trgm declares set_limit(real); an uncast Python float binds as
+        # double precision and PostgreSQL finds no matching function.
+        db.execute(
+            text("select set_limit(cast(:threshold as real))"),
+            {"threshold": WORK_TRIGRAM_THRESHOLD},
+        )
+
+        statement = statement.where(
+            Work.normalized_title.op("%")(source_title)
+        )
+
+    return db.scalars(statement).all()
 
 def retrieve_identifier_matches(
     db: Session,

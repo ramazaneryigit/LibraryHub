@@ -1,5 +1,6 @@
 """Isolated SQLite contract tests; no application database is used."""
 import os
+import re
 import unittest
 import uuid
 
@@ -17,9 +18,49 @@ from app.routers.reconciliation import router
 from app.services.reconciliation import compare_field, generate_work_candidates
 
 
+def _trigrams(value):
+    """Trigram set built the way pg_trgm builds it: per word, padded '  word '."""
+    result = set()
+    for word in re.split(r'[^\w]+', value or ''):
+        if not word:
+            continue
+        padded = '  ' + word + ' '
+        result.update(padded[i:i + 3] for i in range(len(padded) - 2))
+    return result
+
+
+def _sqlite_trigram_similarity(left, right):
+    """Stand-in for pg_trgm's similarity() on the SQLite test engine.
+
+    |shared trigrams| / |union|, which mirrors pg_trgm closely enough for policy
+    tests. It is NOT bit-identical to pg_trgm, and the production query also uses
+    the `%` operator for index-backed blocking -- SQLite has no equivalent, so
+    that filter is skipped there. These tests therefore exercise policy
+    behaviour, not the exact scoring of a deployed PostgreSQL instance.
+    """
+    a = _trigrams(left)
+    b = _trigrams(right)
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
 class PolicyTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
+        # SQLite has no schemas, but the Control Plane and Tenant Data Plane
+        # tables live in `control` and `tenant`. Attach in-memory databases
+        # under those names before create_all; StaticPool keeps everything on
+        # the one shared connection, so the attachments stay visible.
+        # See docs/architecture-v2.md §0.5 and §0.7.
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql("ATTACH DATABASE ':memory:' AS control")
+            connection.exec_driver_sql("ATTACH DATABASE ':memory:' AS tenant")
+            # pg_trgm is a PostgreSQL extension and the code under test calls
+            # its similarity() function, so provide it on this engine.
+            connection.connection.create_function(
+                'similarity', 2, _sqlite_trigram_similarity
+            )
         Base.metadata.create_all(self.engine)
         self.db = Session(self.engine)
         self.source = SourceRecord(source_system='test', source_record_id='controlled', record_type='work',
