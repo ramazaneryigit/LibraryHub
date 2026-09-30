@@ -6,8 +6,8 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..ids import uuid7
-from ..models import Entity, Identifier, Nomen, Person
+from app.core.ids import uuid7
+from app.db.models import Entity, Identifier, Nomen, Person
 from ..services.entity_merge import (
     create_entity_merge,
     resolve_canonical_entity_id,

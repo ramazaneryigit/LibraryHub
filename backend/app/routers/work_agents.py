@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import (
+from app.db.models import (
     Entity,
     Work,
     Person,

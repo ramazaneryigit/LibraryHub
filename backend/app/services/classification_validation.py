@@ -3,7 +3,7 @@ import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import (
+from app.db.models import (
     ClassificationNode,
     SourceClassification,
     VocabularyScheme,

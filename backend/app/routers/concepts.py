@@ -3,8 +3,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..ids import uuid7
-from ..models import Concept, Entity
+from app.core.ids import uuid7
+from app.db.models import Concept, Entity
 
 
 router = APIRouter(tags=["concepts"])

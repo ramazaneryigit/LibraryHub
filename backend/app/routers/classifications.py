@@ -13,7 +13,7 @@ from ..services.classification_validation import (
 from ..services.entity_merge import resolve_canonical_entity_id
 
 from ..db import get_db
-from ..models import (
+from app.db.models import (
     Entity,
     Work,
     CollectiveAgent,

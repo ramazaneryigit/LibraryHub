@@ -9,8 +9,12 @@ sys.path.insert(0, str(BASE_DIR))
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-from app.db import Base
-from app import models
+from app.db.base import Base
+
+# Imported for its side effect: every model module registers its tables on
+# `Base.metadata`, and autogenerate compares that metadata against the database.
+# Without this, Alembic would believe every table should be dropped.
+from app.db import models  # noqa: F401
 
 config = context.config
 

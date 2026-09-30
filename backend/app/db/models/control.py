@@ -38,14 +38,21 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .db import Base
-from .ids import uuid7
+from ..base import Base, utcnow
+from ...core.ids import uuid7
+
+__all__ = [
+    "Branch",
+    "EmailVerification",
+    "Organization",
+    "OrganizationDomain",
+    "Tenant",
+    "TenantDatabase",
+    "User",
+    "UserSession",
+]
 
 CONTROL_SCHEMA = "control"
-
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 class Tenant(Base):

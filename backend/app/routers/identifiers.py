@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..services.entity_merge import resolve_canonical_entity_id
 
 from ..db import get_db
-from ..models import Entity, Identifier
+from app.db.models import Entity, Identifier
 
 
 router = APIRouter(tags=["identifiers"])

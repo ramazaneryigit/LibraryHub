@@ -62,15 +62,19 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .db import Base
-from .ids import uuid7
+from ..base import Base, utcnow
+from ...core.ids import uuid7
+
+__all__ = [
+    "TenantChangeProposal",
+    "TenantHolding",
+    "TenantItem",
+    "TenantItemIdentifier",
+    "TenantLocation",
+]
 
 TENANT_SCHEMA = "tenant"
 CONTROL_SCHEMA = "control"
-
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 class TenantLocation(Base):

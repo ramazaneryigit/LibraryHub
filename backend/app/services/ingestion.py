@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import IngestionBatch, SourceRecord
+from app.db.models import IngestionBatch, SourceRecord
 
 
 def normalize_institution_entity_id(

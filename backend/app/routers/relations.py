@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Entity, EntityRelation
+from app.db.models import Entity, EntityRelation
 from ..services.entity_merge import resolve_canonical_entity_id
 
 

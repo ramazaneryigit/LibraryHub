@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from ..auth import (
+from app.core.security import (
     SESSION_TTL_HOURS,
     VERIFICATION_TTL_HOURS,
     as_utc,
@@ -26,7 +26,7 @@ from ..auth import (
     new_session_token,
     verify_password,
 )
-from ..control_models import (
+from app.db.models import (
     EmailVerification,
     Organization,
     OrganizationDomain,
@@ -37,7 +37,7 @@ from ..control_models import (
 from ..db import get_db
 from ..dependencies import current_session, current_user
 from ..email_domains import classify_email, domain_of
-from ..ids import uuid7
+from app.core.ids import uuid7
 
 
 logger = logging.getLogger("libraryhub.auth")

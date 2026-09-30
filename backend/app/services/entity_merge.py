@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Entity, EntityMerge
+from app.db.models import Entity, EntityMerge
 
 
 class EntityMergeCycleError(Exception):

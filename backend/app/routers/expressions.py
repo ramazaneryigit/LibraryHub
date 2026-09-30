@@ -6,8 +6,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..ids import uuid7
-from ..models import Entity, Expression, Work
+from app.core.ids import uuid7
+from app.db.models import Entity, Expression, Work
 from ..services.entity_merge import resolve_canonical_entity_id
 
 

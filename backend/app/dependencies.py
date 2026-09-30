@@ -22,8 +22,8 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import as_utc, hash_session_token
-from .control_models import User, UserSession
+from app.core.security import as_utc, hash_session_token
+from app.db.models import User, UserSession
 from .db import get_db, tenant_session
 
 __all__ = ["current_session", "current_user", "require_role", "tenant_db"]
