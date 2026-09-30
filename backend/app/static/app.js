@@ -26,6 +26,109 @@ function escapeHtml(value) {
    ARAMA SONUCU KARTI
 --------------------------------------------------------- */
 
+/* Bir eseri tutan kütüphaneler, ağacın tamamından toplanır.
+ *
+ * API holding'leri ifade → yayın → holding yolunda veriyor; arama sonucu kartı
+ * ise "kimde var?" sorusunu ilk bakışta cevaplamalı, yoksa okuyucu her kayda
+ * tıklamak zorunda kalır. Aynı kurum birden çok baskıyı tutabildiği için
+ * toplanıyor.
+ */
+function workHoldings(work) {
+    const byInstitution = new Map();
+
+    (work.expressions || []).forEach(expression => {
+        (expression.manifestations || []).forEach(manifestation => {
+            (manifestation.holdings || []).forEach(holding => {
+                const key = holding.entity_id || "kaydedilmemis";
+
+                const entry = byInstitution.get(key) || {
+                    entity_id: holding.entity_id,
+                    name: holding.name,
+                    item_count: 0,
+                    availability: {},
+                };
+
+                entry.item_count += holding.item_count || 0;
+
+                Object.entries(holding.availability || {}).forEach(
+                    ([status, count]) => {
+                        entry.availability[status] =
+                            (entry.availability[status] || 0) + count;
+                    }
+                );
+
+                byInstitution.set(key, entry);
+            });
+        });
+    });
+
+    return [...byInstitution.values()].sort(
+        (left, right) => right.item_count - left.item_count
+    );
+}
+
+
+/* Kartta gösterilen kütüphane sayısı. Sınırsız bırakmak, tek bir eserin altında
+ * yüz kurum listelemek demekti -- bir kez tam olarak bu oldu ve gerçek
+ * kütüphaneler listeyi boğdu. Gerisi sayıyla bildirilir, detayda tamamı var. */
+const HOLDINGS_ON_CARD = 5;
+
+
+function renderWorkHoldings(work) {
+    const holdings = workHoldings(work);
+
+    if (holdings.length === 0) {
+        return `
+            <div class="result-holdings empty">
+                Bu eseri tutan kütüphane kaydı yok.
+            </div>
+        `;
+    }
+
+    const totalCopies = holdings.reduce(
+        (sum, holding) => sum + holding.item_count,
+        0
+    );
+
+    const shown = holdings.slice(0, HOLDINGS_ON_CARD);
+    const rest = holdings.length - shown.length;
+
+    const rows = shown
+        .map(holding => `
+            <div class="result-holding">
+                <span class="result-holding-name">
+                    ${escapeHtml(holding.name) || "Kurum kaydedilmemiş"}
+                </span>
+
+                <span class="result-holding-count">
+                    ${holding.item_count} nüsha
+                </span>
+            </div>
+        `)
+        .join("");
+
+    return `
+        <div class="result-holdings">
+            <div class="result-holdings-total">
+                ${totalCopies} nüsha · ${holdings.length} kütüphane
+            </div>
+
+            ${rows}
+
+            ${
+                rest > 0
+                    ? `
+                        <div class="result-holding rest">
+                            ve ${rest} kütüphane daha · kaydı görüntüleyin
+                        </div>
+                      `
+                    : ""
+            }
+        </div>
+    `;
+}
+
+
 function renderWork(work) {
     const authors = work.authors || [];
     const subjects = work.subjects || [];
@@ -95,6 +198,8 @@ function renderWork(work) {
                       `
                     : ""
             }
+
+            ${renderWorkHoldings(work)}
 
             <button
                 type="button"

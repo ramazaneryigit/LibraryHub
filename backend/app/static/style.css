@@ -276,6 +276,60 @@ footer {
     line-height: 1.6;
 }
 
+
+/* ---------------------------------------------------------
+   ARAMA KARTINDA KÜTÜPHANE BİLGİSİ
+--------------------------------------------------------- */
+
+.result-holdings {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.result-holdings.empty {
+    color: var(--muted);
+    font-size: 14px;
+    font-style: italic;
+}
+
+.result-holdings-total {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary);
+    margin-bottom: 8px;
+}
+
+.result-holding {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    font-size: 14px;
+    padding: 3px 0;
+}
+
+.result-holding-name {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.result-holding-count {
+    color: var(--muted);
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.result-holding.rest {
+    color: var(--muted);
+    font-size: 13px;
+    font-style: italic;
+    justify-content: flex-start;
+    padding-top: 6px;
+}
+
 .detail-button {
     margin-top: 12px;
     border: 0;

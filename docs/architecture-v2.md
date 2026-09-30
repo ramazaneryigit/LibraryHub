@@ -1819,6 +1819,44 @@ zaten kapsanıyor).
 
 ---
 
+### 0.26 Arama sonucu kartı kütüphaneyi göstermiyordu
+
+#### Belirti
+
+Kullanıcı "Suç ve Ceza" aradı ve **kütüphane bilgisi gelmedi**. API doğru cevap
+veriyordu; ben de bunu doğrulayıp kapattığımı sanmıştım.
+
+#### Yanlış yerden doğrulamışım
+
+Holding'leri API yanıtında aradım ve buldum — ama **detay** ucunda. Kullanıcının
+gördüğü şey **arama sonucu kartıydı** ve o kartta kütüphane bölümü hiç yoktu:
+başlık, özgün başlık, yazar, konu, dil, açıklama ve "Kaydı görüntüle" düğmesi.
+Holding verisi yanıtta vardı ama `expressions[].manifestations[].holdings`
+yolunda; kart onu hiç okumuyordu.
+
+Bunu **gerçek tarayıcıda ekran görüntüsü alarak** buldum. API'yi sorgulamak, kodu
+okumak ve testleri koşturmak bu hatayı göstermedi — üçü de doğru cevabı veriyordu,
+sadece kullanıcının baktığı yerde değil.
+
+#### Düzeltme
+
+Kart artık ifade → yayın → holding ağacını toplayıp **"5 nüsha · 3 kütüphane"** ve
+kütüphane kırılımını gösteriyor. Aynı kurum birden çok baskıyı tutabildiği için
+toplanıyor.
+
+**Kartta en fazla beş kütüphane** listeleniyor, gerisi "ve N kütüphane daha" ile
+bildiriliyor. Sınırsız bırakmak, bir kez tam olarak yaşanan şeyi tekrarlardı: tek
+bir eserin altında yüz kurum ve gerçek kütüphanelerin listede kaybolması (§0.23).
+
+#### Ders
+
+İki kez oldu: `hidden` özniteliğini ezen CSS (§0.24) ve bu. **İkisini de yalnızca
+ekran görüntüsü buldu.** Arayüzün eksiksizliği bu projede test edilebilir bir şey
+değil; bir kontrol yazmak, test edilen şeyin doğru olduğunu sanma üretir. Doğru
+araç, değişiklikten sonra gerçek sayfaya bakmak.
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman
