@@ -16,6 +16,7 @@ See docs/architecture-v2.md §5.2 and §0.13.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -23,9 +24,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.types import JSON
 
 from ..control_models import User
 from ..dependencies import current_user, tenant_db
@@ -116,6 +118,49 @@ def _translate(exc: IntegrityError) -> HTTPException:
     return HTTPException(status_code=status_code, detail=detail)
 
 
+def _proposal_view(row) -> dict:
+    """Normalise a proposal row for JSON output.
+
+    PostgreSQL hands a `json` column back already parsed; SQLite returns the text
+    it stored, because `text()` carries no type information for the driver to
+    work from. Both are accepted here so the response shape does not depend on
+    which engine answered.
+    """
+
+    result = _jsonable(row)
+
+    for name in ("field_changes", "applied_fields"):
+        value = result.get(name)
+
+        if isinstance(value, str):
+            try:
+                result[name] = json.loads(value)
+            except json.JSONDecodeError:
+                result[name] = []
+
+        elif value is None and name == "field_changes":
+            result[name] = []
+
+    return result
+
+
+def _bindable(values: dict) -> dict:
+    """UUIDs to their canonical strings before binding.
+
+    These paths use `text()`, which carries no type information, so the driver
+    decides what to do with a `uuid.UUID`: psycopg3 adapts it and sqlite3 refuses
+    it with "type 'UUID' is not supported". Sending the canonical string is
+    accepted by both, which is what lets the SQLite suite exercise the write
+    paths at all -- they were unreachable from a test before this, and a write
+    path nothing tests is a write path nobody has checked.
+    """
+
+    return {
+        name: str(value) if isinstance(value, UUID) else value
+        for name, value in values.items()
+    }
+
+
 def _assert_branch_is_ours(db: Session, user: User, branch_id: UUID) -> None:
     """Check the branch belongs to the caller's tenant.
 
@@ -132,7 +177,7 @@ def _assert_branch_is_ours(db: Session, user: User, branch_id: UUID) -> None:
             "SELECT 1 FROM control.branches "
             "WHERE id = :id AND tenant_id = :tenant_id"
         ),
-        {"id": branch_id, "tenant_id": user.tenant_id},
+        _bindable({"id": branch_id, "tenant_id": user.tenant_id}),
     ).scalar()
 
     if found is None:
@@ -180,7 +225,7 @@ def _assert_holding_is_ours(db: Session, holding_id: UUID) -> None:
 
     found = db.execute(
         text("SELECT 1 FROM tenant.holdings WHERE id = :id"),
-        {"id": holding_id},
+        _bindable({"id": holding_id}),
     ).scalar()
 
     if found is None:
@@ -438,7 +483,7 @@ def _insert(
             text(
                 f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
             ),
-            values,
+            _bindable(values),
         )
         db.commit()
     except IntegrityError as exc:
@@ -447,7 +492,7 @@ def _insert(
 
     row = db.execute(
         text(f"SELECT {select_columns} FROM {table} WHERE id = :id"),
-        {"id": values["id"]},
+        _bindable({"id": values["id"]}),
     ).mappings().one()
 
     return _jsonable(row)
@@ -481,11 +526,13 @@ def _update(
                 f"UPDATE {table} SET {assignments}, "
                 "updated_at = :updated_at WHERE id = :id"
             ),
-            {
-                **changes,
-                "id": record_id,
-                "updated_at": datetime.now(timezone.utc),
-            },
+            _bindable(
+                {
+                    **changes,
+                    "id": record_id,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            ),
         )
 
         if result.rowcount == 0:
@@ -505,7 +552,7 @@ def _update(
 
     row = db.execute(
         text(f"SELECT {select_columns} FROM {table} WHERE id = :id"),
-        {"id": record_id},
+        _bindable({"id": record_id}),
     ).mappings().one()
 
     return _jsonable(row)
@@ -579,3 +626,203 @@ def update_item(
         payload,
         ITEM_SELECT,
     )
+
+
+# ------------------------------------------------------------------ proposals
+#
+# The tenant cannot write the global plane -- PostgreSQL refuses it -- and that
+# is the point. This is how an institution says that something on a shared
+# record is wrong, or that a record is missing entirely. It is a request, not an
+# edit: accepting one writes nothing, and applying is a separate step with a
+# whitelist, because "the database accepted this JSON" is not the same claim as
+# "this is a valid value for publication_date".
+#
+# See docs/architecture-v2.md §0.16.
+
+
+PROPOSAL_SELECT = (
+    "id, tenant_id, submitted_by, submitted_by_email, change_type, "
+    "target_entity_type, target_entity_id, field_changes, rationale, evidence, "
+    "status, reviewed_by, reviewed_at, review_note, applied_at, applied_fields, "
+    "created_at, updated_at"
+)
+
+# `field_changes` is a JSON column and this router talks in raw SQL, so the
+# parameter is typed explicitly. Without it the driver sees a Python list and
+# offers it as an array, which the column will not take.
+PROPOSAL_INSERT = text(
+    """
+    INSERT INTO tenant.change_proposals
+        (id, tenant_id, submitted_by, submitted_by_email, change_type,
+         target_entity_type, target_entity_id, field_changes, rationale,
+         evidence, status, created_at, updated_at)
+    VALUES
+        (:id, :tenant_id, :submitted_by, :submitted_by_email, :change_type,
+         :target_entity_type, :target_entity_id, :field_changes, :rationale,
+         :evidence, :status, :created_at, :updated_at)
+    """
+).bindparams(bindparam("field_changes", type_=JSON))
+
+
+class FieldChange(BaseModel):
+    field: str = Field(min_length=1, max_length=100)
+    current: str | None = Field(default=None, max_length=2000)
+    proposed: str | None = Field(default=None, max_length=2000)
+
+
+class ProposalCreate(BaseModel):
+    """A request to change something on the global plane.
+
+    The controlled vocabularies (`change_type`, `status`) are not repeated as
+    enums here: the table has check constraints for them, and two copies of the
+    same rule drift apart with the database being the one that is right.
+    """
+
+    change_type: str = "correction"
+    target_entity_type: str | None = Field(default=None, max_length=40)
+    target_entity_id: UUID | None = None
+    field_changes: list[FieldChange] = Field(default_factory=list)
+    rationale: str = Field(min_length=10, max_length=4000)
+    evidence: str | None = Field(default=None, max_length=4000)
+
+
+@router.post("/proposals", status_code=status.HTTP_201_CREATED)
+def create_proposal(
+    payload: ProposalCreate,
+    db: Session = Depends(tenant_db),
+    user: User = Depends(current_user),
+):
+    now = datetime.now(timezone.utc)
+
+    values = {
+        "id": uuid7(),
+        # From the account, never from the request.
+        "tenant_id": user.tenant_id,
+        "submitted_by": user.id,
+        "submitted_by_email": user.email,
+        "change_type": payload.change_type,
+        "target_entity_type": payload.target_entity_type,
+        "target_entity_id": payload.target_entity_id,
+        "field_changes": [
+            change.model_dump() for change in payload.field_changes
+        ],
+        "rationale": payload.rationale.strip(),
+        "evidence": (payload.evidence or "").strip() or None,
+        "status": "pending",
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    try:
+        db.execute(PROPOSAL_INSERT, _bindable(values))
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise _translate(exc) from exc
+
+    row = db.execute(
+        text(
+            f"SELECT {PROPOSAL_SELECT} FROM tenant.change_proposals "
+            "WHERE id = :id"
+        ),
+        _bindable({"id": values["id"]}),
+    ).mappings().one()
+
+    return _proposal_view(row)
+
+
+@router.get("/proposals")
+def list_proposals(
+    proposal_status: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(tenant_db),
+    user: User = Depends(current_user),
+):
+    # No `WHERE tenant_id` here either. The policy decides, so a mistake in this
+    # function shows one institution's proposals to another only if the policy is
+    # wrong -- which is the place to be wrong, once, rather than here, repeatedly.
+    query = f"SELECT {PROPOSAL_SELECT} FROM tenant.change_proposals"
+    params: dict = {"limit": limit}
+
+    if proposal_status:
+        query += " WHERE status = :status"
+        params["status"] = proposal_status
+
+    query += " ORDER BY created_at DESC LIMIT :limit"
+
+    rows = db.execute(text(query), params).mappings().all()
+
+    return {
+        "tenant_id": str(user.tenant_id),
+        "count": len(rows),
+        "proposals": [_proposal_view(row) for row in rows],
+    }
+
+
+@router.get("/proposals/{proposal_id}")
+def get_proposal(
+    proposal_id: UUID,
+    db: Session = Depends(tenant_db),
+    user: User = Depends(current_user),
+):
+    row = db.execute(
+        text(
+            f"SELECT {PROPOSAL_SELECT} FROM tenant.change_proposals "
+            "WHERE id = :id"
+        ),
+        _bindable({"id": proposal_id}),
+    ).mappings().first()
+
+    if row is None:
+        # Another institution's proposal is invisible rather than forbidden, so
+        # the endpoint cannot be used to probe for their existence.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Öneri bulunamadı.",
+        )
+
+    return _proposal_view(row)
+
+
+@router.post("/proposals/{proposal_id}/withdraw")
+def withdraw_proposal(
+    proposal_id: UUID,
+    db: Session = Depends(tenant_db),
+    user: User = Depends(current_user),
+):
+    """Withdraw a proposal that has not been decided yet.
+
+    A proposal that has been accepted, rejected or already applied is a record of
+    a decision, so it does not move back to `pending` -- the row count says so and
+    the answer is 404 rather than a silent no-op.
+    """
+
+    result = db.execute(
+        text(
+            "UPDATE tenant.change_proposals "
+            "SET status = 'withdrawn', updated_at = :updated_at "
+            "WHERE id = :id AND status = 'pending'"
+        ),
+        _bindable(
+            {"id": proposal_id, "updated_at": datetime.now(timezone.utc)}
+        ),
+    )
+
+    if result.rowcount == 0:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Geri çekilebilecek bekleyen bir öneri bulunamadı.",
+        )
+
+    db.commit()
+
+    row = db.execute(
+        text(
+            f"SELECT {PROPOSAL_SELECT} FROM tenant.change_proposals "
+            "WHERE id = :id"
+        ),
+        _bindable({"id": proposal_id}),
+    ).mappings().one()
+
+    return _proposal_view(row)

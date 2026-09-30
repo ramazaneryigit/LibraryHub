@@ -1729,6 +1729,7 @@ from .control_models import (  # noqa: E402,F401
     UserSession,
 )
 from .tenant_models import (  # noqa: E402,F401
+    TenantChangeProposal,
     TenantHolding,
     TenantItem,
     TenantLocation,

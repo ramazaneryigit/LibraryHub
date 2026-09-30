@@ -53,6 +53,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKeyConstraint,
     Index,
+    JSON,
     Numeric,
     String,
     Text,
@@ -461,6 +462,163 @@ class TenantItem(Base):
 
     withdrawn_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+    )
+
+
+class TenantChangeProposal(Base):
+    """A tenant's request to change something on the global plane.
+
+    The write boundary is a grant: a tenant transaction cannot reach
+    `public.works`, and that is deliberate. It left an obvious hole, though -- an
+    institution that spots a wrong publication date on a shared record had no way
+    to say so, and a publisher's contact had nothing they could legitimately do at
+    all. This is that way.
+
+    Why the proposal lives in the tenant plane
+    ------------------------------------------
+    It is the tenant's own request, so it belongs with the tenant's data and is
+    written under the tenant's own transaction, with the same policy as everything
+    else here. A reviewer reads across tenants with the owner credential, which
+    bypasses row level security and is what an administrative act already uses.
+
+    Why `field_changes` is a list and not the row itself
+    ---------------------------------------------------
+    A proposal is a statement about *changes*, each with a before and an after, so
+    a reviewer can see what would actually move. Accepting a proposal writes
+    nothing by itself: applying is a separate, explicit step against a whitelist of
+    fields, because "the database accepted this JSON" is not the same claim as
+    "this is a valid value for `publication_date`".
+
+    See docs/architecture-v2.md §0.16.
+    """
+
+    __tablename__ = "change_proposals"
+
+    __table_args__ = (
+        CheckConstraint(
+            "change_type IN ('correction', 'addition', 'relation', 'other')",
+            name="ck_change_proposals_type",
+        ),
+        CheckConstraint(
+            "status IN "
+            "('pending', 'accepted', 'rejected', 'withdrawn', 'applied')",
+            name="ck_change_proposals_status",
+        ),
+        # An addition has nothing to point at yet; everything else must name the
+        # record it is about, or a reviewer has nothing to review.
+        CheckConstraint(
+            "(change_type = 'addition' AND target_entity_id IS NULL) "
+            "OR (change_type <> 'addition' AND target_entity_id IS NOT NULL)",
+            name="ck_change_proposals_target",
+        ),
+        Index(
+            "ix_change_proposals_tenant_status",
+            "tenant_id",
+            "status",
+        ),
+        Index("ix_change_proposals_status", "status"),
+        {"schema": TENANT_SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid7,
+    )
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        nullable=False,
+    )
+
+    # control.users.id. Cross-plane, and deliberately without a foreign key for
+    # the same reason as the branch and manifestation references: a deleted
+    # account should not take the proposal's history with it.
+    submitted_by: Mapped[uuid.UUID | None] = mapped_column(
+        nullable=True,
+    )
+
+    submitted_by_email: Mapped[str | None] = mapped_column(
+        String(320),
+        nullable=True,
+    )
+
+    change_type: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="correction",
+    )
+
+    target_entity_type: Mapped[str | None] = mapped_column(
+        String(40),
+        nullable=True,
+    )
+
+    target_entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        nullable=True,
+    )
+
+    # [{"field": ..., "current": ..., "proposed": ...}, ...]
+    field_changes: Mapped[list] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+
+    rationale: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    # Where the correction comes from. Bibliographic work without a cited source
+    # is an opinion, and a reviewer cannot weigh an opinion.
+    evidence: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="pending",
+    )
+
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(320),
+        nullable=True,
+    )
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    review_note: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    applied_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    # What was actually written, which is not always everything that was asked
+    # for: a field outside the whitelist is dropped and that has to be visible.
+    applied_fields: Mapped[list | None] = mapped_column(
+        JSON,
         nullable=True,
     )
 
