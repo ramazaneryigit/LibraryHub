@@ -1098,6 +1098,14 @@ def check_holdings_reach_the_catalogue(owner) -> None:
         text("select count(*) from tenant.holdings")
     ).scalar()
 
+    suppressed = owner.execute(
+        text(
+            "select count(*) from tenant.holdings where status = 'suppressed'"
+        )
+    ).scalar()
+
+    published = total - suppressed
+
     projected = owner.execute(
         text("select count(*) from public.holdings_compat")
     ).scalar()
@@ -1115,10 +1123,16 @@ def check_holdings_reach_the_catalogue(owner) -> None:
         )
     ).scalar()
 
+    # Two different failures, and both matter. A published holding that is not in
+    # the projection is a library missing from the union catalogue -- the defect
+    # that started this. A holding that *is* in it with no institution is a
+    # catalogue entry pointing nowhere, which is what the migration bucket was
+    # before it was suppressed. Neither is allowed to be non-zero.
     record(
-        "Her holding toplu katalogda gorunuyor",
-        total == projected,
-        f"{projected}/{total} holding yansitildi, "
+        "Her yayinlanmis holding toplu katalogda ve kurumlu",
+        published == projected and without_institution == 0,
+        f"{projected}/{published} yayinlanmis holding yansitildi "
+        f"({suppressed} bastirilmis), "
         f"{without_items} tanesi nushasiz, "
         f"{without_institution} tanesinde kurum kaydi yok",
     )

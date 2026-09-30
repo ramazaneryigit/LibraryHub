@@ -2015,6 +2015,72 @@ kovaları. Şu an "Kurum kaydedilmemiş" olarak dürüstçe görünüyorlar, ama
 kütüphaneli bir yapıda bu bir kütüphane değil bir **veri kalitesi sinyali**dir ve
 katalogda kütüphane gibi görünmemeli. Ayrı bir iş.
 
+**Kapandı — §0.29.**
+
+---
+
+### 0.29 Göç kovası bastırıldı, ve projeksiyonlar bastırmayı öğrendi
+
+#### Kusur
+
+§0.28'den kalan 6 holding katalogda "Kurum kaydedilmemiş" olarak görünüyordu.
+Zincir tam olarak şurada kopuyordu:
+
+```
+holding → branch → organization → collective_agent_entity_id → collective_agents
+                                          ^^^ NULL
+```
+
+`Unassigned items (migration)`, eski nüsha göçünün yarattığı bir kovadır ve
+`organizations` satırının `collective_agent_entity_id`'si boştur — çünkü **bir kurum
+değildir**. Yani dürüst okuma "adı eksik bir kütüphane" değil, **"kütüphane değil"**.
+
+#### Neden `status`, neden özel durum değil
+
+`tenant.holdings.status` zaten `('active', 'closed', 'suppressed')`. Bir kurumun
+yayımlamama kararı verdiği holding **bastırılmış**tır, ve "toplu katalogda
+görünmez" bu kelimenin anlamıdır. Bunu kullanmak, her projeksiyona bu belirli
+kiracıyı tanımayı öğretmekten farkı **kural ile isim arasındaki farktır**.
+
+Bastırmanın hiçbir şey kaybettirmediği **önce ölçüldü**: o altı holdingin toplam
+nüshası **sıfır**.
+
+#### Veri ve şema ayrımı
+
+Bastırma veridir, ve bir id listesi olarak değil bir **koşul** olarak yazıldı:
+kurumunun collective agent'ı olmayan her kiracının holding'leri. Bu
+deterministiktir — aynı eski göçü çalıştırmış her veritabanı aynı durumdadır — yani
+bu ortama özel bir yama değil.
+
+İki projeksiyon şekil değiştirdiği için yamalanmadı, yeniden tanımlandı.
+
+#### Ve `downgrade` test edildi
+
+§16'nın ilkesi: her migration'ın `downgrade()`'i yazılır **ve test edilir**.
+
+| Adım | Katalogda | Bastırılmış |
+|---|---|---|
+| `upgrade head` | **10** | 6 |
+| `downgrade -1` | **16** | 0 |
+| `upgrade head` (tekrar) | **10** | 6 |
+
+`downgrade` yalnızca bu revizyonun bastırdıklarını geri açar: kendi holding'ini
+bilerek bastırmış bir kurumun kararı korunur.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **123/123** |
+| Senaryo kontrolleri | **37/37** |
+| `alembic check` | temiz, tek head `e2a7c3d58b61` |
+| Yayımlanmış holding yansıması | **10/10**, 0 nüshasız, 0 kurumsuz |
+| Katalogda kurumsuz kayıt | **0** (önce 6) |
+| `Bilgi Yönetimine Giriş` | yalnızca Kırıkkale — göç kovası katalogdan çıktı |
+| `Suç ve Ceza` | 3 baskı · 3 kütüphane, değişmedi |
+| `downgrade` / `upgrade` döngüsü | 16 → 10, veri kaybı yok |
+| Ana sayfa, `/admin`, `/health`, `/search` | 200 |
+
 ---
 
 ## 1. Plane modeli
