@@ -973,6 +973,110 @@ orası da düzeltildi.
 
 ---
 
+### 0.16 Aşama 6 ön adımı ve global plane değişiklik önerisi — TAMAMLANDI
+
+#### Adım 2: `controlled_test` fixture'ının ITEM kısmı emekliye ayrıldı
+
+Fixture **10 birleştirme** ve 8 entity tipinden oluşuyordu; canonical redirect mantığının
+her tipte çalıştığını gösteriyor. **Silinmedi** — yalnızca ITEM kısmı ayrıldı, çünkü nüsha
+artık global bir entity değil ve global kimlik kaydında yer alamaz. Eski kimliği
+`tenant.items.legacy_entity_id` koruyor; bu bir **eşleme, yönlendirme değil**.
+
+`scripts/retire_item_test_fixture.py` önce **deneme modunda** ne gideceğini ve neyin
+kalacağını gösteriyor, `--apply` ile uyguluyor. Uygulandı: 1 birleştirme + 1
+`controlled_test_holder` ilişkisi. Diğer 7 tipin 9 birleştirmesi yerinde duruyor
+(doğrulandı).
+
+#### Bu sırada bulunan yeni engel: legacy yazma yolu hâlâ açık
+
+`POST /items` ve `POST /items/{item_id}/agents` **canlı** ve `public.items` ile
+`item_agent_relation` yazıyor — yani **ITEM entity üretmeye devam ediyor.** Aşama 6, bir uç
+onları üretmeye devam ettiği sürece `'ITEM'` değerini CHECK'ten çıkaramaz. Bu bir temizlik
+detayı değil, ön koşul.
+
+Tek çağıran `scripts/seed_diverse_catalog.py`; `/tenant/items`'a taşınması gerekiyor.
+
+Bunu **ölçülebilir bir tripwire** hâline getirdim (`run_scale_checks.py`): uçlar router
+modüllerinden okunuyor (`app.main` değil — o, çalışma dizinine göre statik dizin bağlıyor ve
+burada patlar). Kontrol seti artık Aşama 6'nın kalan **tek** engelini raporluyor.
+
+#### Adım 3: global plane değişiklik önerisi
+
+Yazma sınırı bir grant ve bu doğru. Ama bir delik bırakıyordu: **ortak bir kayıtta yanlış
+bir yayın tarihi gören kurumun bunu söyleyecek yeri yoktu** ve `account_kind='corporate'`
+bir yayınevi sorumlusunun yapmasına izin verilen hiçbir şey yoktu — çünkü yayınevine ait
+kayıtlar global plane'de. Öneri mekanizması ikisini birden açıyor.
+
+**Öneri neden tenant plane'inde?** Öneri kurumun kendi talebidir; kendi işleminden yazılır ve
+bu şemadaki her tablo gibi aynı fail-closed politikaya tabidir. `control`'a koysaydım ya
+kiracı rolüne control plane yazma yetkisi vermem gerekirdi — ayrımın var olma sebebi bu — ya
+da uç, tenant'ı istek gövdesinden alarak kiracı oturumu dışında yazardı; diğer sebep de bu.
+İnceleyen, sahip kimliğiyle kiracılar arası okur; idari işler burada zaten böyle yürüyor.
+
+**Kabul etmek, uygulamak değildir.** `status` kararı kaydeder; `applied_at` ve
+`applied_fields` gerçekte ne yazıldığını kaydeder. İkisi ayrı, çünkü bir alan beyaz listede
+olmadığı için düşebilir ve bu görünmelidir — "veritabanı bu JSON'u kabul etti" ile "bu,
+`publication_date` için geçerli bir değer" aynı iddia değil.
+
+Beyaz liste kasten kısa: Work, Expression ve Manifestation'ın **betimleyici** alanları.
+Kimlik kaydına, `entity_merges`'e veya düzeltmenin birleştirmeye dönüşmesine izin veren
+hiçbir alan yok.
+
+**Yeni uçlar:** `POST /tenant/proposals`, `GET /tenant/proposals`,
+`GET /tenant/proposals/{id}`, `POST /tenant/proposals/{id}/withdraw`.
+**İnceleme:** `scripts/review_proposal.py --list | --show | --accept | --reject [--apply]`.
+
+#### Kanıt — canlı, iki kurumla
+
+| Kontrol | Sonuç |
+|---|---|
+| Kırıkkale öneri gönderdi | **201**, `pending`, `field_changes` 1 kayıt |
+| Hacettepe'nin listesi | **0 öneri** |
+| Hacettepe tek kaydı okumaya çalıştı | **404** |
+| Hacettepe geri çekmeye çalıştı | **404** |
+| İnceleme kuyruğu | öneri, kurum, gerekçe ve kaynakla listelendi |
+| `--accept --apply` | **`public.works` güncellendi**, `applied_fields=["description"]` |
+| Beyaz listede olmayan `entity_id` alanı | **elendi**, yalnızca `description` yazıldı |
+| Karar verilmiş öneriyi yeniden karara bağlama | **reddedildi** ("zaten 'applied'") |
+| Öneri şeması / RLS / izinler | `tenant_isolation` politikası, `rls=true`, tam DML |
+| Uygulama başarısız olduğunda | **işlem geri alındı**, öneri `pending` kaldı |
+
+Senaryo kontrolleri **26**, test paketi **88** (72'den).
+
+#### Bulunan gerçek hatalar
+
+1. **`public.works`'ta `updated_at` yok** — üç tablonun hepsi için `updated_at = now()`
+   yazdım ve her uygulama denemesi patladı. Şema okunarak düzeltildi; artık her tablo için
+   ayrı ayrı belirtiliyor, varsayılmıyor.
+2. **`normalized_title` ham SQL ile güncellenmiyor.** `public.works.normalized_title` bir
+   ORM olay dinleyicisiyle bakılıyor ve ham SQL onu tetiklemez. Bir başlık düzeltmesi
+   `normalized_title`'ı bayat bırakıp, tam da düzeltilen kaydın eşleştirmesini sessizce
+   bozacaktı. Uygulama adımı artık aynı normalizasyonu çalıştırıyor.
+3. **SQLite `uuid.UUID` bağlayamıyor.** `text()` tip bilgisi taşımadığı için sürücü karar
+   veriyor: psycopg3 uyarlıyor, sqlite3 "type 'UUID' is not supported" diyor. Yazma
+   yollarının **tamamı** testten erişilemez durumdaydı — yani test edilmemiş yazma yolları.
+   `_bindable()` eklendi; artık iki motorda da çalışıyor ve testler bu yolları gerçekten
+   koşuyor.
+4. **SQLite JSON sütununu metin döndürüyor** (PostgreSQL ayrıştırılmış liste veriyor).
+   `field_changes` istemciye 65 karakterlik bir dizi olarak dönüyordu. `_proposal_view()`
+   iki motoru da aynı şekle getiriyor.
+
+Kendi ölçüm hatalarım: PowerShell'de `$pid` **salt okunur otomatik değişkendir**, onu öneri
+kimliği sanıp geçersiz UUID gönderdim; ve bir önceki turda olduğu gibi iç içe tırnaklı
+`python -c` komutları yine bozuldu.
+
+#### Açık kalanlar
+
+1. **Yönetici kimliği yok.** `reviewed_by` komut satırında verilen bir ad; kimliği
+   doğrulanmış bir hesap değil. Panel aşaması gerçek bir yönetici kimliği gerektiriyor ve o
+   gelene kadar bu, `create_user.py` gibi sahip kimliğiyle çalışan ayrıcalıklı bir konsol
+   aracı.
+2. **`POST /items` ve `POST /items/{item_id}/agents` hâlâ açık** — Aşama 6'nın tek engeli.
+3. `change_proposals` üzerinden **ekleme** önerileri bu araçla uygulanmıyor; kaydı bir
+   yöneticinin oluşturması gerekiyor. Araç bunu söylüyor, sessizce başarısız olmuyor.
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman
