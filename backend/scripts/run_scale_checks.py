@@ -560,6 +560,37 @@ def check_branch_guard(owner, app) -> None:
         )
 
 
+def check_legacy_item_routes() -> None:
+    """Legacy endpoints that still create global items.
+
+    `POST /items` and `POST /items/{item_id}/agents` write `public.items`,
+    `manifestation_item` and `item_agent_relation`, which means they keep
+    producing ITEM entities. Aşama 6 cannot remove that entity type while a route
+    can still make one, so retiring these is a prerequisite and not a tidy-up.
+
+    The routers are imported directly rather than through `app.main`, which mounts
+    a static directory relative to the working directory and would fail here.
+
+    `scripts/seed_diverse_catalog.py` is the only caller left, and it has to move
+    to `/tenant/items` before these can go.
+    """
+
+    from app.routers import item_agents, items
+
+    legacy = sorted(
+        f"POST {route.path}"
+        for module in (items, item_agents)
+        for route in module.router.routes
+        if "POST" in getattr(route, "methods", set())
+    )
+
+    record(
+        "Asama 6: global item yazan legacy uc kalmadi",
+        not legacy,
+        "hala acik: " + ", ".join(legacy) if legacy else "temiz",
+    )
+
+
 def main() -> int:
     owner_engine = create_engine(OWNER_URL)
     app_engine = create_engine(APP_URL)
@@ -587,6 +618,7 @@ def main() -> int:
         check_branch_guard(owner, app)
 
         print("\n-- Asama 6 hazirligi --")
+        check_legacy_item_routes()
         check_phase6_readiness(owner)
 
     failed = [name for name, passed, _ in results if not passed]
