@@ -118,21 +118,41 @@ def purge(connection) -> None:
         )
 
     # Global plane: drop the entities whose subtype row carries the marker.
+    #
+    # Expressions and Manifestations are here because the fixtures create their
+    # own now -- see the block above. Without them a purge would leave the
+    # bibliographic records behind and the next run would attach to nothing.
     removed = connection.execute(
         text(
             """
             delete from public.entities e
-            where e.entity_type in ('WORK', 'ORGANIZATION')
-              and (
-                    exists (
-                        select 1 from public.works w
-                        where w.entity_id = e.id and w.description like :m
+            where (
+                    e.entity_type in ('WORK', 'ORGANIZATION')
+                and (
+                        exists (
+                            select 1 from public.works w
+                            where w.entity_id = e.id and w.description like :m
+                        )
+                     or exists (
+                            select 1 from public.collective_agents ca
+                            where ca.entity_id = e.id and ca.description like :m
+                        )
                     )
-                 or exists (
-                        select 1 from public.collective_agents ca
-                        where ca.entity_id = e.id and ca.description like :m
+                  )
+               or (
+                    e.entity_type = 'EXPRESSION'
+                and exists (
+                        select 1 from public.expressions x
+                        where x.entity_id = e.id and x.description like :m
                     )
-              )
+                  )
+               or (
+                    e.entity_type = 'MANIFESTATION'
+                and exists (
+                        select 1 from public.manifestations mf
+                        where mf.entity_id = e.id and mf.notes like :m
+                    )
+                  )
             """
         ),
         {"m": f"%{MARKER}%"},
@@ -233,6 +253,8 @@ def generate(connection, organizations: int, works: int, items: int, seed: int) 
     )
 
     # ---------------------------------------------------- global plane works
+    work_rows = []
+
     if works:
         titles = _titles(rng, works)
         work_rows = []
@@ -268,29 +290,110 @@ def generate(connection, organizations: int, works: int, items: int, seed: int) 
             work_rows,
         )
 
-    # ------------------------------------------------------ tenant plane rows
-    # Reuse the Manifestations that already exist: one bibliographic record held
-    # by many institutions is exactly what the plane split is for.
-    manifestation_ids = [
-        row[0]
-        for row in connection.execute(
-            text(
-                """
-                select m.entity_id
-                from public.manifestations m
-                order by m.entity_id
-                limit 12
-                """
-            )
-        ).fetchall()
-    ]
-    expression_ids = [
-        row[0]
-        for row in connection.execute(
-            text("select entity_id from public.expressions order by entity_id limit 4")
-        ).fetchall()
-    ]
+    # --------------------------- global plane: expressions and manifestations
+    #
+    # This block replaced a query. The fixtures used to link their holdings to the
+    # first twelve manifestations ordered by id, under a comment about one
+    # bibliographic record being held by many institutions. The intent was right;
+    # the choice of record was not. Those were *real* records, so 930 fixture
+    # holdings landed on genuine works and buried the libraries that actually hold
+    # them -- the 1867 Russian edition of a novel came out with ninety-two
+    # institutions attached to it.
+    #
+    # A fixture may only ever point at a record it created itself. That is the
+    # rule this block exists to make true, and `run_scale_checks.py` asserts it.
+    expression_ids = []
+    manifestation_ids = []
+    new_entity_rows = []
+    expression_rows = []
+    manifestation_rows = []
+    work_expression_rows = []
+    expression_manifestation_rows = []
 
+    for index, work in enumerate(work_rows, start=1):
+        expression_id = uuid7()
+        manifestation_id = uuid7()
+
+        expression_ids.append(expression_id)
+        manifestation_ids.append(manifestation_id)
+
+        new_entity_rows.append({"id": expression_id, "type": "EXPRESSION"})
+        new_entity_rows.append({"id": manifestation_id, "type": "MANIFESTATION"})
+
+        expression_rows.append(
+            {
+                "id": expression_id,
+                "language": "tr",
+                "form": "written",
+                "description": f"{MARKER} ifade {index}",
+            }
+        )
+        manifestation_rows.append(
+            {
+                "id": manifestation_id,
+                "statement": f"{MARKER} Yayincilik",
+                "date": str(2000 + index % 25),
+                "edition": f"{1 + index % 5}. baski",
+                "carrier": "kitap",
+                "extent": f"{100 + index} sayfa",
+                "notes": MARKER,
+            }
+        )
+        work_expression_rows.append(
+            {"work_id": work["id"], "expression_id": expression_id}
+        )
+        expression_manifestation_rows.append(
+            {
+                "expression_id": expression_id,
+                "manifestation_id": manifestation_id,
+            }
+        )
+
+    if new_entity_rows:
+        connection.execute(
+            text(
+                "insert into public.entities "
+                "(id, entity_type, created_at, updated_at) "
+                "values (:id, :type, now(), now())"
+            ),
+            new_entity_rows,
+        )
+        connection.execute(
+            text(
+                "insert into public.expressions "
+                "(entity_id, language, expression_form, description) "
+                "values (:id, :language, :form, :description)"
+            ),
+            expression_rows,
+        )
+        connection.execute(
+            text(
+                "insert into public.manifestations "
+                "(entity_id, publication_statement, publication_date, "
+                " edition_statement, carrier_type, extent, notes) "
+                "values (:id, :statement, :date, :edition, :carrier, "
+                "        :extent, :notes)"
+            ),
+            manifestation_rows,
+        )
+        connection.execute(
+            text(
+                "insert into public.work_expression "
+                "(work_entity_id, expression_entity_id) "
+                "values (:work_id, :expression_id)"
+            ),
+            work_expression_rows,
+        )
+        connection.execute(
+            text(
+                "insert into public.expression_manifestation "
+                "(expression_entity_id, manifestation_entity_id) "
+                "values (:expression_id, :manifestation_id)"
+            ),
+            expression_manifestation_rows,
+        )
+
+    # ------------------------------------------------------ tenant plane rows
     if not manifestation_ids:
         print("UYARI: hic manifestation yok, tenant plane'i bos birakildi.")
         return

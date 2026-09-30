@@ -362,6 +362,69 @@ def check_tenant_role_jail(app) -> None:
             )
 
 
+def check_fixtures_stay_within_themselves(owner) -> None:
+    """A scale fixture may only ever point at a record it created itself.
+
+    The generator used to link its holdings to the first twelve manifestations
+    ordered by id, meaning real ones: 930 fixture holdings landed on genuine
+    works and buried the libraries that actually hold them. A search for a novel
+    returned ninety-two invented institutions and the two real ones were lost in
+    the list, which is exactly what a reader notices and reports.
+
+    Fixture records are identified by the marker their subtype row carries, so
+    this compares each fixture holding's target against that set. Vacuously true
+    when no fixtures are loaded, which is why the count of holdings examined is
+    reported rather than just the verdict.
+    """
+
+    fixture_holdings = owner.execute(
+        text(
+            "select count(*) from tenant.holdings h "
+            "join control.tenants t on t.id = h.tenant_id "
+            "where t.slug like :prefix"
+        ),
+        {"prefix": "scale-%"},
+    ).scalar()
+
+    leaked = owner.execute(
+        text(
+            "select count(*) from tenant.holdings h "
+            "join control.tenants t on t.id = h.tenant_id "
+            "where t.slug like :prefix "
+            "  and h.manifestation_entity_id is not null "
+            "  and not exists ("
+            "      select 1 from public.manifestations m "
+            "      where m.entity_id = h.manifestation_entity_id "
+            "        and m.notes like :marker)"
+        ),
+        {"prefix": "scale-%", "marker": "%[scale-fixture]%"},
+    ).scalar()
+
+    leaked += owner.execute(
+        text(
+            "select count(*) from tenant.holdings h "
+            "join control.tenants t on t.id = h.tenant_id "
+            "where t.slug like :prefix "
+            "  and h.expression_entity_id is not null "
+            "  and not exists ("
+            "      select 1 from public.expressions x "
+            "      where x.entity_id = h.expression_entity_id "
+            "        and x.description like :marker)"
+        ),
+        {"prefix": "scale-%", "marker": "%[scale-fixture]%"},
+    ).scalar()
+
+    record(
+        "Scale fixture kendi kaydindan baskasina baglanmiyor",
+        leaked == 0,
+        (
+            f"{fixture_holdings} fixture holding incelendi, sizan: {leaked}"
+            if fixture_holdings
+            else "yuklu fixture yok (kontrol bos gecti)"
+        ),
+    )
+
+
 def check_account_guard(app) -> None:
     """An application role cannot promote an account to administrator.
 
@@ -833,6 +896,7 @@ def main() -> int:
 
         print("\n-- yazma yolu --")
         check_subtype_insert_order(owner_engine)
+        check_fixtures_stay_within_themselves(owner)
 
         print("\n-- kaynak tutarliligi --")
         check_app_imports_resolve()
