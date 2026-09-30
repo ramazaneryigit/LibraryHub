@@ -2233,6 +2233,75 @@ doğru tutuyor, ve geçiş için gereken her şey yerinde.
 
 ---
 
+### 0.32 `/search` indekste, ve bölümleme eşiği ölçülüyor
+
+#### `/search` artık indeksi kullanıyor
+
+Aday sorgusu; eserleri, ajanları, nomen'leri, tanımlayıcıları, konuları, ifadeleri,
+yayınları, yayıncıları ve nüshaları tek bir ifadede dolaşıp her birini kendi
+`ILIKE`'ıyla eşleştiriyordu — §15.2'nin başında **944 ms** ölçülmüş, ve aranabilir
+her yeni alanla büyüyordu. Artık `search_documents` içinde **tek bir arama**.
+
+Sözleşme değişmedi: aynı parametreler, aynı yanıt biçimi, aynı `truncated` sinyali.
+`search.py` 318 satırdan **191'e** indi.
+
+| Probe | Önce | Sonra |
+|---|---|---|
+| `Dostoyevski` | — | **18 ms** |
+| `edebiyat` | — | **37 ms** |
+| `a` (neredeyse hepsini eşler) | — | **130 ms** |
+| Belgedeki tepe ölçüm | **944 ms** | — |
+
+Ve davranış aynı: `Mazlum Beyhan` ✓, `KKU-123456` (barkod) ✓, `Ayse Demir` →
+`Ayşe Demir` ✓ (aksan duyarsız ✓), bulunamayan probe → 0 ✓, boş probe → 422 ✓.
+
+**Yeni kontrol:** "her başlık ve her barkod kendi eserini buluyor." Eksik bir başlık,
+kimsenin bulamayacağı bir eserdir ve belirti arama tarafından **görünmez** — sorgu
+sadece daha az satır döner ve hangisinin eksik olduğunu söylemez. İlk koşusunda
+düştü ve **benim hatamdı**: manifestation id'sini eser id'siyle karşılaştırmıştım,
+bulunabilen on barkodu eksik diye bildirdi.
+
+#### Bölümleme: yapılmadı, ve nedeni ölçüldü
+
+§15.2 bu işi **açıkça erteliyor**: *"Bugün yapılmaz... Tetikleyici eşik: ~50 milyon
+satır veya p95'te 100 ms."* Bugünkü durum:
+
+| Ölçüm | Değer | Eşik |
+|---|---|---|
+| `entities` | **79** | 50.000.000 |
+| `entity_relation` | **10** | 50.000.000 |
+| p95 (temsilî `entity_relation` sorgusu) | **0,8 ms** | 100 ms |
+
+Yani altı mertebe uzakta. Seksen satırlık bir tabloyu yeniden yazmak, projenin kendi
+kararına uymamak olurdu.
+
+**Ama ölçüm planın bir eksiğini buldu.** PostgreSQL bölümleme anahtarının her
+benzersiz kısıtta olmasını şart koşar; `PARTITION BY LIST (entity_type)` birincil
+anahtarı `(id, entity_type)` yapar ve **`entities(id)`'e bakan 19 yabancı anahtarın
+tamamı** yeniden yazılmalıdır — her biri kendi tablosuna bir `entity_type` kolonu
+kazandırarak. `PARTITION BY HASH (id)` bunların hiçbirine dokunmaz ama tip
+taramasının getirisini de vermez.
+
+Yani öneri yanlış değil, **sırası** yanlış: `entity_relation` bugün bedava
+bölümlenebilir (benzersiz kısıtı anahtarı zaten içeriyor), `entities` ise ancak
+bilinçli bir şema kararıyla.
+
+Bunun yerine **eşik ölçülüyor**: kontrol satır sayısını ve temsilî sorgunun p95'ini
+ölçüp eşik aşıldığında **düşüyor**. Karar hatırlanmıyor, dayatılıyor.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **123/123** |
+| Senaryo kontrolleri | **41/41** (1 yeni) |
+| `alembic check` | temiz, tek head `f3b8d1e64c72` |
+| Arama davranışı | 5 probe, boş probe 422, bulunamayan 0 |
+| Arama hızı | 18–130 ms (belgede 944 ms) |
+| Bölümleme eşiği | aşılmadı; ölçülüyor |
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman
@@ -3088,6 +3157,30 @@ Gerçek tabloda doğrulandı — plan artık doğru index'i kullanıyor:
 **Bugün yapılmaz.** Partition'lama mevcut tabloyu yeniden yazmayı gerektirir; veri
 hacmi henüz 91 entity. Tetikleyici eşik: **~50 milyon satır** veya `entity_relation`
 sorgu gecikmesinin p95'te 100 ms'yi aşması.
+
+#### Düzeltme — `entities` için `LIST` planı fazla pahalı (§0.32)
+
+Ölçüldü: **`entities(id)`'e bakan 19 yabancı anahtar var** ve `entities`'in birincil
+anahtarı `(id)`.
+
+PostgreSQL, **bölümleme anahtarının her benzersiz kısıtta bulunmasını** şart koşar.
+`PARTITION BY LIST (entity_type)` bu yüzden birincil anahtarı `(id, entity_type)`
+yapmak zorundadır; bu da **19 yabancı anahtarın tamamının** yeniden yazılmasını ve
+o tabloların her birine bir `entity_type` kolonu eklenmesini gerektirir. Seksen
+satırlık bir tablo için bu, şema çapında bir değişikliktir.
+
+**`PARTITION BY HASH (id)`** ise hiçbir yabancı anahtara dokunmaz — çünkü `id`
+zaten anahtardır — ama tip bazlı taramanın getirisini de sağlamaz.
+
+**Sonuç:** öneri yanlış değil, **hangisinin önce yapılacağı** yanlış.
+`entity_relation` bugün bedava bölümlenebilir: benzersiz kısıtı
+`(subject_entity_id, predicate, object_entity_id)` zaten bölümleme anahtarını
+içeriyor. `entities` ise tip bazında ancak şema çapında bir kararla bölümlenebilir —
+ve o karar bir performans ayarı olarak değil, bilerek alınmalıdır.
+
+Tetikleyici artık **ölçülüyor**: `run_scale_checks.py` satır sayısını ve temsilî
+bir `entity_relation` sorgusunun p95'ini ölçüp eşik aşıldığında **düşüyor**. Karar
+böylece hatırlanmıyor, dayatılıyor.
 
 ### 15.3 Trigram index'i hem kullanılmıyor hem silinme riskinde — ölçüldü
 

@@ -21,6 +21,7 @@ Usage
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -1342,6 +1343,82 @@ def check_search_finds_what_it_should(owner) -> None:
     )
 
 
+# §15.2 defers partitioning with a measured trigger: about fifty million rows, or
+# a p95 above 100 ms on `entity_relation`. Both are checked below.
+PARTITION_ROW_THRESHOLD = 50_000_000
+PARTITION_LATENCY_THRESHOLD_MS = 100.0
+
+
+def check_partitioning_threshold(owner) -> None:
+    """§15.2 says partitioning waits. This is what says whether it still does.
+
+    The section is explicit -- "not today", with a trigger of ~50 million rows or
+    a p95 over 100 ms on `entity_relation` -- so the useful work here is not
+    rewriting a table with seventy-nine rows. It is making the trigger a
+    measurement that fails a check, so the decision is enforced by the numbers
+    rather than remembered by whoever reads the section last.
+
+    Measuring it also turned up what the plan did not account for. PostgreSQL
+    requires the partition key in every unique constraint, so `PARTITION BY LIST
+    (entity_type)` on `entities` forces the primary key to `(id, entity_type)`,
+    which forces all nineteen foreign keys that point at `entities(id)` to be
+    rewritten and their tables to grow an `entity_type` column. `PARTITION BY
+    HASH (id)` would leave every one of them alone, because `id` is already the
+    key -- but it buys none of the type-scan benefit the section wanted.
+
+    So the plan is not wrong to wait; it is wrong about which partition to build
+    first. `entity_relation` can be partitioned by `subject_entity_id` today at
+    no cost to anything, since its unique constraint already contains that
+    column. `entities` cannot be partitioned by type without a schema-wide
+    change, and that is a decision to take deliberately rather than as a
+    performance tweak.
+    """
+
+    entities = owner.execute(text("select count(*) from public.entities")).scalar()
+    relations = owner.execute(
+        text("select count(*) from public.entity_relation")
+    ).scalar()
+
+    referencing = owner.execute(
+        text(
+            "select count(*) from pg_constraint "
+            "where contype = 'f' and confrelid = 'public.entities'::regclass"
+        )
+    ).scalar()
+
+    # The query §15.1 added an index for, which is the one that grows: relations
+    # are read in both directions and the reverse scan is the hot one.
+    samples = []
+
+    for _ in range(20):
+        start = time.perf_counter()
+
+        owner.execute(
+            text(
+                "select count(*) from public.entity_relation "
+                "where predicate = 'has_subject' "
+                "  and object_entity_id is not null"
+            )
+        ).scalar()
+
+        samples.append((time.perf_counter() - start) * 1000)
+
+    samples.sort()
+    p95 = samples[int(len(samples) * 0.95) - 1]
+
+    rows_triggered = max(entities, relations) >= PARTITION_ROW_THRESHOLD
+    latency_triggered = p95 >= PARTITION_LATENCY_THRESHOLD_MS
+
+    record(
+        "Bolumleme esigi asilmadi (§15.2)",
+        not rows_triggered and not latency_triggered,
+        f"entities={entities} entity_relation={relations} "
+        f"(esik {PARTITION_ROW_THRESHOLD}), p95={p95:.1f} ms "
+        f"(esik {PARTITION_LATENCY_THRESHOLD_MS:.0f} ms), "
+        f"entities'e bakan FK={referencing}",
+    )
+
+
 def check_app_imports_resolve() -> None:
     """Every absolute `app.*` import in the source points at something real.
 
@@ -1441,6 +1518,9 @@ def main() -> int:
         check_search_index_is_complete(owner)
         check_search_index_is_reproducible(owner)
         check_search_finds_what_it_should(owner)
+
+        print("\n-- olcek --")
+        check_partitioning_threshold(owner)
 
         print("\n-- outbox --")
         check_outbox_same_transaction(owner)
