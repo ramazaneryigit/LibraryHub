@@ -1160,6 +1160,93 @@ maddesi de yeşil. Sıradaki iş, temizliğin kendisi — veri kaybı olmadan ta
 
 ---
 
+### 0.18 Aşama 6: legacy item plane'i emekliye ayrıldı — TAMAMLANDI
+
+Migration `b1c4e8f29a37` (+ takip `c2d5f93ab048`). `public.items`, `manifestation_item` ve
+`item_agent_relation` düştü; `entities.entity_type` CHECK'inden `'ITEM'` çıktı; 12 ITEM
+entity silindi. `public` şeması **36 tablo → 33 tablo + 2 görünüm**.
+
+#### Hesapta olmayan tek şey: üç tanımlayıcı
+
+Ölçüm her kalemde sıfır veriyordu — ama **`identifiers` tablosunda ITEM entity'lerine bakan 3
+satır vardı** ve ikisi, sahibi olan nüshanın **tek kimliğiydi**: barkodsuz, raf yeri olmayan
+iki Rusya Devlet Kütüphanesi nüshasının `neb` şemasındaki numaraları. Entity'ler silinince
+FK `ON DELETE CASCADE` olduğu için sessizce yok olacaklardı.
+
+Bu yüzden **`tenant.item_identifiers`** eklendi ve üçü oraya taşındı. Doğru yer orasıydı
+zaten: bir nüshanın ulusal kütüphane numarası, esere dair bir olgu değil, **kurumun kendi
+nesnesine dair kaydıdır** — barkodu gibi kiracı verisi. `public.item_identifiers` görünümü
+onları global okuyucuya açar ve `/search` artık oradan okuyor; yani **arama kaybı sıfır**
+(ölçüldü: her iki `neb` numarası da hâlâ bulunuyor).
+
+#### Görünüm artık uyumluluk katmanı değil, projeksiyon
+
+`items_compat`'in legacy dalı kalktı; geriye tenant plane'inin global okuması kaldı. Bu
+**yük taşıyan** bir özellik: bir view varsayılan olarak **sahibinin yetkileriyle** çalışır,
+yani RLS'i atlar ve her kurumun nüshasını görür. Global bir ucun "bunu kim tutuyor"
+sorusunu yanıtlayabilmesinin tek sebebi bu.
+
+Buna uygun olarak erişimi daraltıldı: **`libraryhub_tenant_app` görünüm yetkisini kaybetti.**
+Rolün görünüme ihtiyacı yoktu ve onu tutmak, kiracıya özel bir işlemin görünüm üzerinden
+kiracılar arası okuma yapabilmesi demekti. Aynı daraltma yeni `item_identifiers` görünümü
+için de yapıldı.
+
+Görünüm yeniden yazılırken **gizli bir kusur da düzeltildi**: `control.organizations` ile
+`tenant_id` üzerinden join yapıyordu ve bir tenant'ın iki kuruluşu olduğu gün her nüshayı
+çoğaltacaktı. Artık holding'in şubesi üzerinden join yapıyor — sahibi gerçekte belirleyen yol.
+Plan da sadeleşti: üç aşamalı hash join, 849 satır.
+
+#### Migration kendi koşulunu dayatıyor
+
+ITEM entity'leri silinmeden önce migration, **tenant karşılığı olmayan bir ITEM entity varsa
+hata verip duruyor.** Kontrol seti zaten sıfır diyordu, ama kimlik satırı silen bir
+migration'ın bağımlı olduğu koşulu sabah alınmış bir rapora güvenmek yerine **kendisi
+uygulaması** gerekir.
+
+#### Uygulanmış migration neden düzeltilmedi
+
+Modele `item_id` index'i koymuşum ama migration'a yazmamışım; `alembic check` kırmızı verdi.
+Migration'ı düzeltip yeniden koşmak yerine **takip migration'ı** (`c2d5f93ab048`) yazdım,
+çünkü öncekinin downgrade'i `tenant.item_identifiers`'ı düşürüyor ve upgrade'i içeriği
+`public.identifiers`'tan yeniden okuyor — o satırlar artık cascade ile silinmiş durumda.
+Yeniden koşsaydım tablo **sessizce boş** kalırdı ve korumak için var olduğu üç tanımlayıcı
+kaybolurdu. "Uygulanmış migration düzenlenmez" kuralının somut karşılığı bu.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| `public.items` / `manifestation_item` / `item_agent_relation` | **üçü de YOK** |
+| ITEM entity | **0** (`entities` 491 → **479**) |
+| `entity_type` CHECK | `'ITEM'` **yok** |
+| `items_compat` | **849 satır**, kurumsuz 0 |
+| `tenant.item_identifiers` | **3 satır** — hiçbiri kaybolmadı |
+| `/search` ile `neb` numaraları ve `ITEM-KKU-123456` | **hepsi bulunuyor** |
+| `/collective-agents/{KKU}/works` | 6 eser |
+| Tenant plane (`/tenant/items`, `/branches`, `/holdings`) | 6 / 1 / 6 |
+| Senaryo kontrolleri | **27/27** |
+| Test paketi | **88/88** |
+| `alembic check` | temiz |
+
+Arama süreleri: `bilgi` (tek sonuç) **105 ms → 54 ms**; `scale` 452 ms → **422 ms**;
+`Ölçek` 336 ms. Legacy dalın kalkması bir miktar geri kazandırdı ama taban çizgisinin
+(~300 ms) üstünde: projeksiyon 849 satırı materyalize ediyor ve asıl çözüm hâlâ §9'daki
+Search Plane.
+
+Geri dönüş yolu: `_legacy_items_backup.sql` (üç tablonun `pg_dump --data-only`'si, düşürmeden
+önce alındı). Migration'ın kendisi de tabloları boş olarak geri kurar — **satırlar değil**.
+
+#### Kalanlar
+
+1. **Yönetici kimliği yok** — panel aşamasının işi.
+2. **`tenant.item_identifiers` için uç yok.** Tablo ve global projeksiyon var; bir nüshanın
+   tanımlayıcısını eklemek/düzeltmek için API henüz yok.
+3. `tenant.items.legacy_entity_id` **kasıtlı olarak duruyor**: göçmüş nüshaların eski
+   kimliğini koruyor ve projeksiyonun `entity_id`'si ona dayanıyor. Emekliye ayrılması,
+   istemcilerin eski kimlikleri bırakmasına bağlı.
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman
