@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -14,26 +13,13 @@ from ....services.entity_merge import (
     resolve_canonical_entity_id,
 )
 from ....services.work_detail import build_work_detail
+from ....schemas.persons import PersonCreate, NomenCreate
 
 
 router = APIRouter(
     prefix="/persons",
     tags=["persons"],
 )
-
-
-class PersonCreate(BaseModel):
-    canonical_name: str = Field(min_length=1, max_length=500)
-    given_name: str | None = Field(default=None, max_length=250)
-    family_name: str | None = Field(default=None, max_length=250)
-    biography: str | None = None
-
-class NomenCreate(BaseModel):
-    value: str = Field(min_length=1, max_length=500)
-    language: str | None = Field(default=None, max_length=100)
-    script: str | None = Field(default=None, max_length=50)
-    nomen_type: str | None = Field(default=None, max_length=100)
-    preferred: bool = False
 
 def find_person_duplicates(
     db: Session,

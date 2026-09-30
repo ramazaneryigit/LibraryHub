@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -10,16 +9,10 @@ from ....db import get_db
 from ....core.ids import uuid7
 from ....db.models import Entity, Expression, Work
 from ....services.entity_merge import resolve_canonical_entity_id
+from ....schemas.expressions import ExpressionCreate
 
 
 router = APIRouter(tags=["expressions"])
-
-
-class ExpressionCreate(BaseModel):
-    work_entity_id: UUID
-    language: str | None = Field(default=None, max_length=100)
-    expression_form: str | None = Field(default=None, max_length=100)
-    description: str | None = None
 
 
 @router.post("/expressions", status_code=201, dependencies=[Depends(require_staff)])

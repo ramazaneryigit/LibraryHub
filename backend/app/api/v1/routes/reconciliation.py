@@ -2,7 +2,6 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -20,36 +19,7 @@ from ....services.reconciliation_freshness import check_freshness
 from ....services.reconciliation_snapshot import capture_decision_snapshot
 from ....services.reconciliation import generate_work_candidates
 from ....services.reconciliation_policy import evaluate_work_reconciliation
-
-class ReconciliationDecisionCreate(BaseModel):
-    candidate_id: uuid.UUID | None = None
-
-    status: str = Field(
-        pattern="^(accepted|rejected|unresolved|new_entity)$",
-    )
-
-    origin: str = Field(
-        default="manual",
-        pattern="^(manual|automatic)$",
-    )
-
-    confidence: float | None = Field(
-        default=None,
-        ge=0.0,
-        le=1.0,
-    )
-
-    reason: str | None = None
-
-    decision_method: str | None = Field(
-        default=None,
-        max_length=100,
-    )
-
-    reviewed_by: str | None = Field(
-        default=None,
-        max_length=200,
-    )
+from ....schemas.reconciliation import ReconciliationDecisionCreate
 
 router = APIRouter(
     prefix="/reconciliation",

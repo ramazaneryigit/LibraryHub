@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,17 +9,13 @@ from ...deps import require_staff
 from ....db import get_db
 from ....db.models import Entity, EntityRelation
 from ....services.entity_merge import resolve_canonical_entity_id
+from ....schemas.relations import EntityRelationCreate
 
 
 router = APIRouter(
     prefix="/relations",
     tags=["relations"],
 )
-
-
-class EntityRelationCreate(BaseModel):
-    object_entity_id: UUID
-    predicate: str = Field(min_length=1, max_length=100)
 
 
 def get_relation_definition(

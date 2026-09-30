@@ -1,7 +1,6 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ...deps import require_admin
@@ -10,28 +9,13 @@ from ....services.ingestion import (
     ingest_jsonl_job,
     ingest_source_records,
 )
+from ....schemas.ingestion import IngestionRecord, IngestionRequest
 
 
 router = APIRouter(
     prefix="/ingestion",
     tags=["ingestion"],
 )
-
-
-class IngestionRecord(BaseModel):
-    source_record_id: str
-    record_type: str
-    source_uri: str | None = None
-    institution_entity_id: str | None = None
-    source_updated_at: str | None = None
-    raw_data: dict[str, Any] = Field(
-        default_factory=dict
-    )
-
-
-class IngestionRequest(BaseModel):
-    source_system: str
-    records: list[IngestionRecord]
 
 
 @router.post("/source-records", dependencies=[Depends(require_admin)])

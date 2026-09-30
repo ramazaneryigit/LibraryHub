@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,16 +9,10 @@ from ....services.entity_merge import resolve_canonical_entity_id
 
 from ....db import get_db
 from ....db.models import Entity, Identifier
+from ....schemas.identifiers import IdentifierCreate
 
 
 router = APIRouter(tags=["identifiers"])
-
-
-class IdentifierCreate(BaseModel):
-    scheme: str = Field(min_length=1, max_length=100)
-    value: str = Field(min_length=1, max_length=500)
-    qualifier: str | None = Field(default=None, max_length=500)
-    preferred: bool = False
 
 
 @router.get("/entities/{entity_id}/identifiers")

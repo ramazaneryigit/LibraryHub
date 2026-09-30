@@ -1,20 +1,14 @@
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ...deps import require_staff
 from ....db import get_db
 from ....core.ids import uuid7
 from ....db.models import Concept, Entity
+from ....schemas.concepts import ConceptCreate
 
 
 router = APIRouter(tags=["concepts"])
-
-
-class ConceptCreate(BaseModel):
-    preferred_label: str = Field(min_length=1, max_length=500)
-    definition: str | None = None
-    scheme: str | None = Field(default=None, max_length=100)
 
 
 @router.post("/concepts", status_code=201, dependencies=[Depends(require_staff)])

@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -11,20 +10,13 @@ from ....core.ids import uuid7
 from ....db.models import Entity, Work
 from ....services.work_detail import build_work_detail
 from ....services.entity_merge import resolve_canonical_entity_id
+from ....schemas.works import WorkCreate
 
 
 router = APIRouter(
     prefix="/works",
     tags=["works"],
 )
-
-
-class WorkCreate(BaseModel):
-    canonical_title: str
-    original_title: str | None = None
-    original_language: str | None = None
-    work_type: str | None = None
-    description: str | None = None
 
 
 @router.get("")

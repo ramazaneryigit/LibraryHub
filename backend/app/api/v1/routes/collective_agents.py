@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -11,15 +10,10 @@ from ....core.ids import uuid7
 from ....db.models import CollectiveAgent, Entity
 from ....services.work_detail import build_work_detail
 from ....services.entity_merge import resolve_canonical_entity_id
+from ....schemas.collective_agents import CollectiveAgentCreate
 
 
 router = APIRouter(tags=["collective-agents"])
-
-
-class CollectiveAgentCreate(BaseModel):
-    canonical_name: str = Field(min_length=1, max_length=500)
-    agent_type: str = Field(min_length=1, max_length=100)
-    description: str | None = None
 
 
 @router.post("/collective-agents", status_code=201, dependencies=[Depends(require_staff)])

@@ -13,7 +13,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
@@ -38,6 +37,7 @@ from ....db import get_db
 from ...deps import current_session, current_user
 from ....email_domains import classify_email, domain_of
 from ....core.ids import uuid7
+from ....schemas.auth import LoginRequest, RegisterRequest, VerifyEmailRequest, ResendVerificationRequest
 
 
 logger = logging.getLogger("libraryhub.auth")
@@ -47,11 +47,6 @@ router = APIRouter(
     prefix="/auth",
     tags=["auth"],
 )
-
-
-class LoginRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=1, max_length=200)
 
 
 _DUMMY_HASH: str | None = None
@@ -82,20 +77,6 @@ def _user_view(user: User, tenant: Tenant | None) -> dict:
         "tenant_id": str(user.tenant_id),
         "tenant_name": tenant.display_name if tenant else None,
     }
-
-
-class RegisterRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=10, max_length=200)
-    display_name: str = Field(min_length=2, max_length=300)
-
-
-class VerifyEmailRequest(BaseModel):
-    token: str = Field(min_length=10, max_length=200)
-
-
-class ResendVerificationRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
 
 
 def _deliver_verification(email: str, token: str, expires_at: datetime) -> None:
