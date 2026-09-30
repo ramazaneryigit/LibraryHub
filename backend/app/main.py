@@ -10,12 +10,10 @@ from .routers import (
     work_agents,
     classifications,
     identifiers,
-    item_agents,
     collective_agents,
     concepts,
     expressions,
     manifestations,
-    items,
     search,
     reconciliation,
     ingestion,
@@ -37,12 +35,10 @@ app.include_router(works.router)
 app.include_router(work_agents.router)
 app.include_router(classifications.router)
 app.include_router(identifiers.router)
-app.include_router(item_agents.router)
 app.include_router(collective_agents.router)
 app.include_router(concepts.router)
 app.include_router(expressions.router)
 app.include_router(manifestations.router)
-app.include_router(items.router)
 app.include_router(search.router)
 app.include_router(reconciliation.router)
 app.include_router(ingestion.router)

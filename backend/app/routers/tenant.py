@@ -235,6 +235,36 @@ def _assert_holding_is_ours(db: Session, holding_id: UUID) -> None:
         )
 
 
+@router.get("/branches")
+def list_branches(
+    db: Session = Depends(tenant_db),
+    user: User = Depends(current_user),
+):
+    """The caller's branches, default first.
+
+    No `WHERE tenant_id` here either. `control.branches` gained the same
+    fail-closed policy as the tenant tables in §0.15, so an application session
+    with no tenant bound sees nothing at all -- which is what makes a
+    branch-picking endpoint safe to write without a filter.
+    """
+
+    rows = db.execute(
+        text(
+            """
+            SELECT id, organization_id, code, name, is_default
+            FROM control.branches
+            ORDER BY is_default DESC, name
+            """
+        )
+    ).mappings().all()
+
+    return {
+        "tenant_id": str(user.tenant_id),
+        "count": len(rows),
+        "branches": [_jsonable(row) for row in rows],
+    }
+
+
 @router.get("/items")
 def list_items(
     limit: int = Query(default=50, ge=1, le=200),
@@ -251,9 +281,13 @@ def list_items(
                 i.availability_status,
                 i.lifecycle_status,
                 h.holding_type,
-                h.call_number
+                h.call_number,
+                b.name AS branch_name,
+                o.name AS organization_name
             FROM tenant.items i
             JOIN tenant.holdings h ON h.id = i.holding_id
+            LEFT JOIN control.branches b ON b.id = h.branch_id
+            LEFT JOIN control.organizations o ON o.id = b.organization_id
             ORDER BY i.barcode NULLS LAST, i.id
             LIMIT :limit
             """
@@ -273,6 +307,10 @@ def list_items(
                 "lifecycle_status": row["lifecycle_status"],
                 "holding_type": row["holding_type"],
                 "call_number": row["call_number"],
+                # Custody, derived from the structure rather than read from a
+                # relation table: item -> holding -> branch -> organization.
+                "branch_name": row["branch_name"],
+                "organization_name": row["organization_name"],
             }
             for row in rows
         ],

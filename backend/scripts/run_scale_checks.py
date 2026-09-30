@@ -560,34 +560,114 @@ def check_branch_guard(owner, app) -> None:
         )
 
 
-def check_legacy_item_routes() -> None:
-    """Legacy endpoints that still create global items.
+LEGACY_ITEM_TABLES = ("manifestation_item", "item_agent_relation")
 
-    `POST /items` and `POST /items/{item_id}/agents` write `public.items`,
-    `manifestation_item` and `item_agent_relation`, which means they keep
-    producing ITEM entities. Aşama 6 cannot remove that entity type while a route
-    can still make one, so retiring these is a prerequisite and not a tidy-up.
 
-    The routers are imported directly rather than through `app.main`, which mounts
-    a static directory relative to the working directory and would fail here.
+def _sql_literals(path: Path) -> list[str]:
+    """String literals in a file, excluding docstrings.
 
-    `scripts/seed_diverse_catalog.py` is the only caller left, and it has to move
-    to `/tenant/items` before these can go.
+    SQL lives in strings and the legacy table names appear nowhere else except
+    comments and prose. Scanning raw text flagged the comment that explained why
+    a query had been removed -- the opposite of useful, and a tripwire that cries
+    wolf is one people learn to ignore.
     """
 
-    from app.routers import item_agents, items
+    import ast
 
-    legacy = sorted(
-        f"POST {route.path}"
-        for module in (items, item_agents)
-        for route in module.router.routes
-        if "POST" in getattr(route, "methods", set())
-    )
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    docstrings = set()
+
+    for node in ast.walk(tree):
+        if not isinstance(
+            node,
+            (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+        ):
+            continue
+
+        body = getattr(node, "body", [])
+
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            docstrings.add(id(body[0].value))
+
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    ]
+
+
+def check_legacy_item_surface() -> None:
+    """Nothing writes global items, and nothing reads the tables phase 6 drops.
+
+    Two questions with the same deadline. A POST under `/items` creates ITEM
+    entities, which is what stops the entity type from being removable at all.
+    And a route cannot outlive its table, so anything still reading
+    `manifestation_item` or `item_agent_relation` has to move before those tables
+    can go.
+
+    Routers are found by importing every module in `app/routers`, so a route
+    re-added anywhere is caught rather than only the two that used to exist.
+    `app.main` is deliberately not imported: it mounts a static directory
+    relative to the working directory and would fail from here.
+
+    Reads are found by scanning rather than importing, because a query buried in
+    a service is exactly as fatal as a route and much easier to overlook.
+    """
+
+    import importlib
+
+    app_root = Path(__file__).resolve().parents[1] / "app"
+
+    write_routes = []
+
+    for path in sorted((app_root / "routers").glob("*.py")):
+        if path.stem.startswith("_"):
+            continue
+
+        module = importlib.import_module(f"app.routers.{path.stem}")
+        router = getattr(module, "router", None)
+
+        if router is None:
+            continue
+
+        for route in router.routes:
+            methods = getattr(route, "methods", set())
+
+            if "POST" in methods and route.path.startswith("/items"):
+                write_routes.append(f"POST {route.path}")
 
     record(
-        "Asama 6: global item yazan legacy uc kalmadi",
-        not legacy,
-        "hala acik: " + ", ".join(legacy) if legacy else "temiz",
+        "Asama 6: global item yazan uc kalmadi",
+        not write_routes,
+        (
+            "hala acik: " + ", ".join(sorted(write_routes))
+            if write_routes
+            else "temiz"
+        ),
+    )
+
+    readers = []
+
+    for folder in ("routers", "services"):
+        for path in sorted((app_root / folder).rglob("*.py")):
+            for literal in _sql_literals(path):
+                for table in LEGACY_ITEM_TABLES:
+                    if table in literal:
+                        readers.append(f"{folder}/{path.name}:{table}")
+                        break
+
+    record(
+        "Asama 6: legacy item tablosuna dokunan kod kalmadi",
+        not readers,
+        "hala dokunan: " + ", ".join(readers) if readers else "temiz",
     )
 
 
@@ -618,7 +698,7 @@ def main() -> int:
         check_branch_guard(owner, app)
 
         print("\n-- Asama 6 hazirligi --")
-        check_legacy_item_routes()
+        check_legacy_item_surface()
         check_phase6_readiness(owner)
 
     failed = [name for name, passed, _ in results if not passed]

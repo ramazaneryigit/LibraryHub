@@ -213,10 +213,15 @@ def search(
       ON manifestation_agent_identifier.entity_id = manifestation_agent.entity_id
 
     -- Manifestation -> Item
-    LEFT JOIN manifestation_item mi
-      ON mi.manifestation_entity_id = manifestation.entity_id
-    LEFT JOIN items item
-      ON item.entity_id = mi.item_entity_id
+    --
+    -- Read through public.items_compat rather than the legacy tables. Copies
+    -- live in the tenant plane now, and the view is how a reader outside any
+    -- tenant sees them. Its `entity_id` is the same identifier the migrated rows
+    -- already had, so the item-level identifiers below still resolve -- which
+    -- matters, because two of them are real catalogue numbers rather than
+    -- generated ones.
+    LEFT JOIN public.items_compat item
+      ON item.manifestation_entity_id = manifestation.entity_id
 
     -- Item tanımlayıcıları
     LEFT JOIN identifiers item_identifier

@@ -100,21 +100,27 @@ def get_collective_agent_works(
 
                 UNION
 
-                -- Collective Agent -> Item -> Manifestation -> Expression -> Work
+                -- Collective Agent -> Holding -> Manifestation -> Expression -> Work
+                --
+                -- Custody used to be a relation row hanging off the item, and
+                -- only the handful of items that had one were found this way.
+                -- It is structural now -- item -> holding -> branch ->
+                -- organization -- and public.items_compat is where that
+                -- structure surfaces for a reader outside any tenant. The
+                -- consequence is deliberate: this branch now answers for every
+                -- copy an institution holds, not only the annotated ones.
                 SELECT
                     w.entity_id AS entity_id,
-                    iar.role AS role,
+                    'holding_institution' AS role,
                     'item' AS relation_level
-                FROM item_agent_relation iar
-                JOIN manifestation_item mi
-                  ON mi.item_entity_id = iar.item_entity_id
+                FROM public.items_compat v
                 JOIN expression_manifestation em
-                  ON em.manifestation_entity_id = mi.manifestation_entity_id
+                  ON em.manifestation_entity_id = v.manifestation_entity_id
                 JOIN work_expression we
                   ON we.expression_entity_id = em.expression_entity_id
                 JOIN works w
                   ON w.entity_id = we.work_entity_id
-                WHERE iar.agent_entity_id = :entity_id
+                WHERE v.holding_institution_entity_id = :entity_id
             ) AS related
             ORDER BY
                 related.entity_id,

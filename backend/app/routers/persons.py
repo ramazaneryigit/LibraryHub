@@ -479,27 +479,14 @@ def merge_persons(
             },
         )
 
-        # 4. Item-agent relations
-        db.execute(
-            text("""
-                INSERT INTO item_agent_relation (
-                    item_entity_id,
-                    agent_entity_id,
-                    role
-                )
-                SELECT
-                    item_entity_id,
-                    :target_id,
-                    role
-                FROM item_agent_relation
-                WHERE agent_entity_id = :source_id
-                ON CONFLICT DO NOTHING
-            """),
-            {
-                "source_id": source_person_id,
-                "target_id": target_person_id,
-            },
-        )
+        # 4. Item-agent relations -- deliberately absent.
+        #
+        # `item_agent_relation` only ever holds institutional custody: every row
+        # is an ORGANIZATION under the role `holding_institution`, and none names
+        # a PERSON (measured before removing this). A person merge therefore has
+        # nothing to move here, and the step was dead code that happened to work.
+        # The table itself is legacy, goes in Aşama 6, and custody is structural
+        # now -- item -> holding -> branch -> organization.
 
         # 5. General Entity relations - source side
         db.execute(
@@ -634,11 +621,13 @@ def merge_persons(
         # 10. Remove active relations from the merged source Person.
         # Historical/provenance references such as reconciliation candidates
         # remain attached to the preserved source Entity.
+        #
+        # `item_agent_relation` is not in this list for the same reason it is not
+        # moved above: it holds institutional custody, not person attributions.
         for table_name in (
             "work_agent_relation",
             "expression_agent_relation",
             "manifestation_agent_relation",
-            "item_agent_relation",
         ):
             db.execute(
                 text(
