@@ -2,7 +2,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 from difflib import SequenceMatcher
 
-from app.db.models import (
+from ..db.models import (
     ExpressionManifestation,
     Identifier,
     ReconciliationCandidate,
@@ -10,7 +10,7 @@ from app.db.models import (
     Work,
     WorkExpression,
 )
-from app.core.text import normalize_text
+from ..core.text import normalize_text
 from .entity_merge import resolve_canonical_entity_id
 from .reconciliation_freshness import METHOD, capture_inputs
 

@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import create_engine, text
 
 from app.email_domains import domain_of, is_institutional
-from app.ids import uuid7
+from app.core.ids import uuid7
 
 
 def list_domains(connection) -> None:

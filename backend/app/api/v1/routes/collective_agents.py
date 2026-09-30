@@ -5,11 +5,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..db import get_db
-from app.core.ids import uuid7
-from app.db.models import CollectiveAgent, Entity
-from ..services.work_detail import build_work_detail
-from ..services.entity_merge import resolve_canonical_entity_id
+from ....db import get_db
+from ....core.ids import uuid7
+from ....db.models import CollectiveAgent, Entity
+from ....services.work_detail import build_work_detail
+from ....services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(tags=["collective-agents"])

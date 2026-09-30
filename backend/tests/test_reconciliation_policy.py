@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
-from app.models import Entity, EntityMerge, SourceRecord, Work, ReconciliationCandidate, ReconciliationDecision
-from app.routers.reconciliation import router
+from app.db.models import Entity, EntityMerge, SourceRecord, Work, ReconciliationCandidate, ReconciliationDecision
+from app.api.v1.routes.reconciliation import router
 from app.services.reconciliation import compare_field, generate_work_candidates
 
 

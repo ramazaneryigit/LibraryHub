@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.db.models import Work
+from ..db.models import Work
 from .entity_merge import resolve_canonical_entity_id
 
 

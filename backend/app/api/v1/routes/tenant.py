@@ -29,9 +29,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.types import JSON
 
-from app.db.models import User
-from ..dependencies import current_user, tenant_db
-from app.core.ids import uuid7
+from ....db.models import User
+from ...deps import current_user, tenant_db
+from ....core.ids import uuid7
 
 
 router = APIRouter(

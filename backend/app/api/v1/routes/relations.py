@@ -6,9 +6,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..db import get_db
-from app.db.models import Entity, EntityRelation
-from ..services.entity_merge import resolve_canonical_entity_id
+from ....db import get_db
+from ....db.models import Entity, EntityRelation
+from ....services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(

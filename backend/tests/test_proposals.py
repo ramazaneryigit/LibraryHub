@@ -28,12 +28,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-import app.dependencies as dependencies
-from app.auth import hash_password
-from app.control_models import Tenant, User
+import app.api.deps as dependencies
+from app.core.security import hash_password
+from app.db.models import Tenant, User
 from app.db import Base, get_db
-from app.routers.auth import router as auth_router
-from app.routers.tenant import router as tenant_router
+from app.api.v1.routes.auth import router as auth_router
+from app.api.v1.routes.tenant import router as tenant_router
 
 
 class ProposalTests(unittest.TestCase):

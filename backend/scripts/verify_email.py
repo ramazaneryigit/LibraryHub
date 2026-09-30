@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import create_engine, text
 
-from app.auth import as_utc, hash_session_token
+from app.core.security import as_utc, hash_session_token
 
 
 def list_pending(connection) -> None:

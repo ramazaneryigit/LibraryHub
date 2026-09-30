@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..db import get_db
-from app.db.models import Concept
-from ..services.work_detail import build_work_detail
-from ..services.entity_merge import resolve_canonical_entity_id
+from ....db import get_db
+from ....db.models import Concept
+from ....services.work_detail import build_work_detail
+from ....services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(tags=["search"])

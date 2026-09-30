@@ -4,15 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db import get_db
-from app.db.models import (
+from ....db import get_db
+from ....db.models import (
     Entity,
     Work,
     Person,
     CollectiveAgent,
     WorkAgentRelation,
 )
-from ..services.entity_merge import resolve_canonical_entity_id
+from ....services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(

@@ -566,11 +566,11 @@ def check_legacy_item_surface() -> None:
 
     write_routes = []
 
-    for path in sorted((app_root / "routers").glob("*.py")):
+    for path in sorted((app_root / "api" / "v1" / "routes").glob("*.py")):
         if path.stem.startswith("_"):
             continue
 
-        module = importlib.import_module(f"app.routers.{path.stem}")
+        module = importlib.import_module(f"app.api.v1.routes.{path.stem}")
         router = getattr(module, "router", None)
 
         if router is None:
@@ -594,7 +594,7 @@ def check_legacy_item_surface() -> None:
 
     readers = []
 
-    for folder in ("routers", "services"):
+    for folder in ("api/v1/routes", "services"):
         for path in sorted((app_root / folder).rglob("*.py")):
             for literal in _sql_literals(path):
                 for table in LEGACY_ITEM_TABLES:

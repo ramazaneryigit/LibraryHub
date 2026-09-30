@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import ReconciliationCandidate, ReconciliationDecision, SourceRecord, Work
+from ..db.models import ReconciliationCandidate, ReconciliationDecision, SourceRecord, Work
 from .entity_merge import EntityMergeCycleError, resolve_canonical_entity_id
 from .reconciliation_freshness import check_freshness
 

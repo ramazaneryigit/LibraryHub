@@ -33,9 +33,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import create_engine, text
 
-from app.auth import hash_password
+from app.core.security import hash_password
 from app.email_domains import classify_email
-from app.ids import uuid7
+from app.core.ids import uuid7
 
 
 ROLES = ("admin", "librarian", "viewer")

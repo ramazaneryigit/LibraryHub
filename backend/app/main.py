@@ -1,60 +1,50 @@
+"""The FastAPI application.
+
+Two mounts of one router
+------------------------
+`/api/v1` is the contract. The unversioned paths are the ones every existing
+client already calls -- the shipped front end, the seed scripts, the operational
+scripts -- and they stay, excluded from the schema so they are not advertised to
+anybody new.
+
+Mounting the same router twice rather than writing a redirect is the honest
+choice here: a redirect would silently change what a `POST` does for clients that
+do not follow redirects, which is most of them, and keeping the handlers in one
+place means the two paths cannot drift apart.
+"""
+
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .routers import (
-    health,
-    relations,
-    persons,
-    works,
-    work_agents,
-    classifications,
-    identifiers,
-    collective_agents,
-    concepts,
-    expressions,
-    manifestations,
-    search,
-    reconciliation,
-    ingestion,
-    auth,
-    tenant,
-)
+from .api.v1 import api_router
+
+API_VERSION = "1.0.0"
 
 
+def create_app() -> FastAPI:
+    application = FastAPI(
+        title="LibraryHub API",
+        version=API_VERSION,
+    )
 
-app = FastAPI(
-    title="LibraryHub API",
-    version="0.1.0",
-)
+    application.include_router(api_router, prefix="/api/v1")
 
-app.include_router(health.router)
-app.include_router(relations.router)
-app.include_router(persons.router)
-app.include_router(works.router)
-app.include_router(work_agents.router)
-app.include_router(classifications.router)
-app.include_router(identifiers.router)
-app.include_router(collective_agents.router)
-app.include_router(concepts.router)
-app.include_router(expressions.router)
-app.include_router(manifestations.router)
-app.include_router(search.router)
-app.include_router(reconciliation.router)
-app.include_router(ingestion.router)
-app.include_router(auth.router)
-app.include_router(tenant.router)
+    # The paths clients already use. Out of the schema on purpose: they are kept
+    # for compatibility, not offered.
+    application.include_router(api_router, include_in_schema=False)
 
-app.mount(
-    "/static",
-    StaticFiles(directory="app/static"),
-    name="static",
-)
+    application.mount(
+        "/static",
+        StaticFiles(directory="app/static"),
+        name="static",
+    )
+
+    @application.get("/", include_in_schema=False)
+    def root():
+        return FileResponse("app/static/index.html")
+
+    return application
 
 
-   
-
-@app.get("/", include_in_schema=False)
-def root():
-    return FileResponse("app/static/index.html")
-
+app = create_app()

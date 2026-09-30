@@ -55,8 +55,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import create_engine, text
 
-from app.ids import uuid7
-from app.normalization import normalize_text
+from app.core.ids import uuid7
+from app.core.text import normalize_text
 
 
 MARKER = "[scale-fixture]"

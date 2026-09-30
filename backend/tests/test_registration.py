@@ -26,8 +26,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.auth import hash_session_token
-from app.control_models import (
+from app.core.security import hash_session_token
+from app.db.models import (
     Branch,
     EmailVerification,
     Organization,
@@ -37,8 +37,8 @@ from app.control_models import (
 )
 from app.db import Base, get_db
 from app.email_domains import CORPORATE, INSTITUTIONAL, classify_email, domain_of
-from app.routers.auth import router as auth_router
-from app.routers.tenant import router as tenant_router
+from app.api.v1.routes.auth import router as auth_router
+from app.api.v1.routes.tenant import router as tenant_router
 
 
 class DomainRuleTests(unittest.TestCase):

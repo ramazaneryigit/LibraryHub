@@ -10,7 +10,7 @@ sys.path.insert(
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import Entity, SourceRecord, Work
+from app.db.models import Entity, SourceRecord, Work
 from app.services.reconciliation import (
     evaluate_decision_policy,
     generate_work_candidates,

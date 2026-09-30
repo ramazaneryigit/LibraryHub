@@ -6,14 +6,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from ..services.classification_validation import (
+from ....services.classification_validation import (
     create_automatic_validation,
     revalidate_classification,
 )
-from ..services.entity_merge import resolve_canonical_entity_id
+from ....services.entity_merge import resolve_canonical_entity_id
 
-from ..db import get_db
-from app.db.models import (
+from ....db import get_db
+from ....db.models import (
     Entity,
     Work,
     CollectiveAgent,

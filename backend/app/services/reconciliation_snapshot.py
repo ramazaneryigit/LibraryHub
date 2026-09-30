@@ -3,7 +3,7 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 
-from app.db.models import Work
+from ..db.models import Work
 from .entity_merge import EntityMergeCycleError, resolve_canonical_entity_id
 from .reconciliation_freshness import check_freshness
 

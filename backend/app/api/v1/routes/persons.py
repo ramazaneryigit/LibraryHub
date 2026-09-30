@@ -5,14 +5,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from ..db import get_db
-from app.core.ids import uuid7
-from app.db.models import Entity, Identifier, Nomen, Person
-from ..services.entity_merge import (
+from ....db import get_db
+from ....core.ids import uuid7
+from ....db.models import Entity, Identifier, Nomen, Person
+from ....services.entity_merge import (
     create_entity_merge,
     resolve_canonical_entity_id,
 )
-from ..services.work_detail import build_work_detail
+from ....services.work_detail import build_work_detail
 
 
 router = APIRouter(

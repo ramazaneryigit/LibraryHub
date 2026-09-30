@@ -5,10 +5,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from ..services.entity_merge import resolve_canonical_entity_id
+from ....services.entity_merge import resolve_canonical_entity_id
 
-from ..db import get_db
-from app.db.models import Entity, Identifier
+from ....db import get_db
+from ....db.models import Entity, Identifier
 
 
 router = APIRouter(tags=["identifiers"])
