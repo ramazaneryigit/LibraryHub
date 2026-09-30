@@ -1,17 +1,35 @@
+"""Seed the multi-volume encyclopaedia fixture.
+
+Shares the helpers with `seed_diverse_catalog`, including the session: a copy is
+written to the tenant plane, so this has to sign in the same way.
+
+Usage
+-----
+    docker compose exec -T api sh -c "cd /app/scripts && python seed_encyclopedia.py \\
+        --email katalog@kku.edu.tr --password '...'"
+
+Both may come from SEED_EMAIL and SEED_PASSWORD instead.
+"""
+
+import argparse
+import os
+
 from seed_diverse_catalog import (
-    create_work,
+    add_identifier,
+    add_subject,
+    add_work_agent,
+    configure,
     create_collective_agent,
     create_concept,
     create_expression,
-    create_manifestation,
     create_item,
-    add_work_agent,
-    add_subject,
-    add_identifier,
+    create_manifestation,
 )
 
 
-def main():
+def main(email, password):
+    configure(email, password)
+
     print("\nOluşturuluyor: İslâm Ansiklopedisi")
 
     work_id = "8d7e7a2a-c6ad-4086-95bb-9f2e0098e604"
@@ -20,13 +38,9 @@ def main():
         "Türkiye Diyanet Vakfı İslâm Araştırmaları Merkezi"
     )
 
-    # The publisher is the Work's creator; the KKU-* copy is held by Kırıkkale.
-    # These are different roles and the item needs its own recorded custody.
-    holding_institution_id = create_collective_agent(
-        "Kırıkkale Üniversitesi",
-        agent_type="university",
-    )
-
+    # The publisher is the Work's creator. The copy belongs to whoever is signed
+    # in: custody is the tenant now, so there is no holding institution to name
+    # and no relation row to write.
     add_work_agent(
         work_id,
         institution_id,
@@ -65,7 +79,6 @@ def main():
         manifestation_id,
         "KKU-ANSIKLOPEDI-SET-0001",
         "DR440 I75",
-        holding_institution_id=holding_institution_id,
     )
 
     add_identifier(
@@ -85,4 +98,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--email", default=os.environ.get("SEED_EMAIL"))
+    parser.add_argument("--password", default=os.environ.get("SEED_PASSWORD"))
+    arguments = parser.parse_args()
+
+    if not arguments.email or not arguments.password:
+        parser.error(
+            "--email ve --password gerekli (veya SEED_EMAIL / SEED_PASSWORD)"
+        )
+
+    main(arguments.email, arguments.password)

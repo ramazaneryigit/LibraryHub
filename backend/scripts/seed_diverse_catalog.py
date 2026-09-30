@@ -1,9 +1,44 @@
+"""Seed a small, deliberately varied catalogue.
+
+Global records -- works, expressions, manifestations, persons, concepts -- are
+still created through the open API, because that is how the global plane is
+written and nothing about that changed.
+
+Copies are not. `POST /items` used to write a global `public.items` row and
+register the copy in the identity registry, which is exactly what Aşama 6 has to
+remove and why this moved. A copy belongs to an institution, under a Holding, in
+a branch, so the script now signs in and goes through `/tenant/holdings` and
+`/tenant/items`. Custody is the tenant itself; there is no relation row to write,
+because the structure already says it.
+
+Usage
+-----
+    docker compose exec -T api sh -c "cd /app/scripts && python seed_diverse_catalog.py \\
+        --email katalog@kku.edu.tr --password '...'"
+
+Both may come from SEED_EMAIL and SEED_PASSWORD instead. The tenant is whatever
+the account belongs to and is never passed in.
+
+See docs/architecture-v2.md §0.17.
+"""
+
+import argparse
 import json
+import os
+import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = os.environ.get("LIBRARYHUB_API", "http://localhost:8000")
+
+# Filled by configure(). Module state rather than an argument threaded through
+# every helper: all of them need it and none of them is about authentication.
+TOKEN = None
+BRANCH_ID = None
 
 
 def request(method, path, data=None):
@@ -17,6 +52,9 @@ def request(method, path, data=None):
         ).encode("utf-8")
 
         headers["Content-Type"] = "application/json; charset=utf-8"
+
+    if TOKEN:
+        headers["Authorization"] = f"Bearer {TOKEN}"
 
     req = urllib.request.Request(
         BASE_URL + path,
@@ -34,6 +72,41 @@ def request(method, path, data=None):
         raise RuntimeError(
             f"{method} {path} -> HTTP {exc.code}\n{error_body}"
         ) from exc
+
+
+def configure(email, password):
+    """Sign in, and pick the branch new holdings go into.
+
+    There is no default to fall back on. The tenant comes from the account, so a
+    script that has not signed in has no business writing anything -- which is
+    the whole point of the boundary this replaces.
+    """
+    global TOKEN, BRANCH_ID
+
+    session = request(
+        "POST",
+        "/auth/login",
+        {"email": email, "password": password},
+    )
+
+    TOKEN = session["token"]
+
+    branches = request("GET", "/tenant/branches")
+
+    if not branches["count"]:
+        raise RuntimeError(
+            f"'{session['user']['tenant_name']}' için tanımlı şube yok."
+        )
+
+    # The endpoint orders the default branch first.
+    BRANCH_ID = branches["branches"][0]["id"]
+
+    print(
+        f"Oturum: {session['user']['email']} @ {session['user']['tenant_name']} "
+        f"(şube: {branches['branches'][0]['name']})"
+    )
+
+    return session["user"]
 
 
 def create_work(
@@ -107,13 +180,31 @@ def create_item(
     manifestation_id,
     barcode,
     shelfmark,
-    holding_institution_id=None,
 ):
-    result = request(
+    """Create a copy in the tenant plane, under a new Holding.
+
+    One Holding per seeded manifestation, keyed by the barcode. The copy is not
+    an entity and does not need one: it is identified by its own id inside the
+    tenant, and `tenant.items.legacy_entity_id` is only for rows migrated from
+    the old global table.
+    """
+    holding = request(
         "POST",
-        "/items",
+        "/tenant/holdings",
         {
+            "branch_id": BRANCH_ID,
             "manifestation_entity_id": manifestation_id,
+            "local_holding_key": barcode,
+            "call_number": shelfmark,
+            "holding_type": "physical",
+        },
+    )
+
+    item = request(
+        "POST",
+        "/tenant/items",
+        {
+            "holding_id": holding["id"],
             "barcode": barcode,
             "shelfmark": shelfmark,
             "condition": "good",
@@ -122,20 +213,7 @@ def create_item(
         },
     )
 
-    item_id = result["entity_id"]
-
-    # Custody must be recorded explicitly. Previously this helper never did, so
-    # every seeded item was institution-less and the item migration had nowhere
-    # honest to place it -- it landed in the `unassigned` tenant
-    # (docs/architecture-v2.md §0.9).
-    if holding_institution_id is not None:
-        add_item_agent(
-            item_id,
-            holding_institution_id,
-            "holding_institution",
-        )
-
-    return item_id
+    return item["id"]
 
 
 def create_person(
@@ -199,17 +277,6 @@ def add_work_agent(work_id, agent_id, role):
     )
 
 
-def add_item_agent(item_id, agent_id, role):
-    return request(
-        "POST",
-        f"/items/{item_id}/agents",
-        {
-            "agent_entity_id": agent_id,
-            "role": role,
-        },
-    )
-
-
 def add_subject(work_id, concept_id):
     return request(
         "POST",
@@ -253,7 +320,6 @@ def create_complete_record(
     identifier_scheme="local",
     extent=None,
     carrier_type="kitap",
-    holding_institution_id=None,
 ):
     print(f"\nOluşturuluyor: {title}")
 
@@ -299,7 +365,6 @@ def create_complete_record(
         manifestation_id,
         barcode,
         shelfmark,
-        holding_institution_id=holding_institution_id,
     )
 
     add_identifier(
@@ -317,16 +382,10 @@ def create_complete_record(
     return work_id
 
 
-def main():
-    print("LibraryHub çeşitli katalog seed işlemi başlıyor.")
+def main(email, password):
+    configure(email, password)
 
-    # The KKU-* fixtures belong to Kırıkkale Üniversitesi. Created once here and
-    # passed down, so every seeded copy records its custody instead of ending up
-    # unattributed.
-    kku_institution_id = create_collective_agent(
-        "Kırıkkale Üniversitesi",
-        agent_type="university",
-    )
+    print("LibraryHub çeşitli katalog seed işlemi başlıyor.")
 
     create_complete_record(
         title="Bilgi Yönetimine Giriş",
@@ -340,7 +399,6 @@ def main():
         identifier="9780000000001",
         identifier_scheme="isbn",
         extent="320 sayfa",
-        holding_institution_id=kku_institution_id,
     )
 
     create_complete_record(
@@ -355,7 +413,6 @@ def main():
         identifier="9780000000002",
         identifier_scheme="isbn",
         extent="96 sayfa",
-        holding_institution_id=kku_institution_id,
     )
 
     create_complete_record(
@@ -371,7 +428,6 @@ def main():
         identifier_scheme="local",
         extent="185 yaprak",
         carrier_type="tez",
-        holding_institution_id=kku_institution_id,
     )
 
     #
@@ -426,7 +482,6 @@ def main():
         manifestation_id,
         "KKU-ANSIKLOPEDI-SET-0001",
         "DR440 I75",
-        holding_institution_id=kku_institution_id,
     )
 
     add_identifier(
@@ -445,4 +500,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--email", default=os.environ.get("SEED_EMAIL"))
+    parser.add_argument("--password", default=os.environ.get("SEED_PASSWORD"))
+    arguments = parser.parse_args()
+
+    if not arguments.email or not arguments.password:
+        parser.error(
+            "--email ve --password gerekli (veya SEED_EMAIL / SEED_PASSWORD)"
+        )
+
+    main(arguments.email, arguments.password)
