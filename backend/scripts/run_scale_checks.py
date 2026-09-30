@@ -336,14 +336,228 @@ def check_tenant_role_jail(app) -> None:
         except Exception as exc:
             app.rollback()
 
-            message = str(exc).strip().splitlines()[0][:90]
+            full = str(exc)
 
             record(
                 f"Tenant rolu global plane'de {label} yapamaz",
-                "permission denied" in message.lower()
-                or "yetki" in message.lower(),
-                message,
+                "permission denied" in full.lower()
+                or "yetki" in full.lower(),
+                full.strip().splitlines()[0][:90],
             )
+
+
+def check_phase6_readiness(owner) -> None:
+    """What still stands between here and dropping the legacy item tables.
+
+    Aşama 6 removes `public.items`, `manifestation_item` and `item_agent_relation`,
+    and drops `'ITEM'` from the `entities.entity_type` check. That is only safe
+    once every row has a home in the tenant plane and no surviving record still
+    points at an entity of that type.
+
+    Measuring it beats assuming it: the point of writing this down is that "we
+    think the migration is complete" and "every row is accounted for" are
+    different claims, and only the second one is checkable.
+    """
+
+    missing_items = owner.execute(
+        text(
+            """
+            SELECT count(*)
+            FROM public.items i
+            WHERE NOT EXISTS (
+                SELECT 1 FROM tenant.items ti
+                WHERE ti.legacy_entity_id = i.entity_id
+            )
+            """
+        )
+    ).scalar()
+
+    record(
+        "Asama 6: her legacy item tenant plane'inde karsiligi var",
+        missing_items == 0,
+        f"karsiligi olmayan: {missing_items}",
+    )
+
+    unrepresented = owner.execute(
+        text(
+            """
+            SELECT count(*)
+            FROM manifestation_item mi
+            LEFT JOIN tenant.items ti
+                   ON ti.legacy_entity_id = mi.item_entity_id
+            LEFT JOIN tenant.holdings th ON th.id = ti.holding_id
+            WHERE ti.id IS NULL
+               OR th.manifestation_entity_id
+                  IS DISTINCT FROM mi.manifestation_entity_id
+            """
+        )
+    ).scalar()
+
+    record(
+        "Asama 6: manifestation_item holding'lerde temsil ediliyor",
+        unrepresented == 0,
+        f"temsil edilmeyen: {unrepresented}",
+    )
+
+    # Ownership used to live in a relation table. In the new model it is
+    # structural -- item -> holding -> branch -> organization -- so the relation
+    # only has to agree with what the structure already says.
+    disagreeing = owner.execute(
+        text(
+            """
+            SELECT count(*)
+            FROM item_agent_relation iar
+            JOIN tenant.items ti ON ti.legacy_entity_id = iar.item_entity_id
+            JOIN tenant.holdings th ON th.id = ti.holding_id
+            JOIN control.branches b ON b.id = th.branch_id
+            JOIN control.organizations o ON o.id = b.organization_id
+            WHERE iar.role = 'holding_institution'
+              AND o.collective_agent_entity_id
+                  IS DISTINCT FROM iar.agent_entity_id
+            """
+        )
+    ).scalar()
+
+    record(
+        "Asama 6: kurum aidiyeti yapidan turetilebiliyor",
+        disagreeing == 0,
+        f"celisen satir: {disagreeing}",
+    )
+
+    stray_entities = owner.execute(
+        text(
+            """
+            SELECT count(*)
+            FROM entities e
+            WHERE e.entity_type = 'ITEM'
+              AND NOT EXISTS (
+                  SELECT 1 FROM public.items i WHERE i.entity_id = e.id
+              )
+            """
+        )
+    ).scalar()
+
+    record(
+        "Asama 6: public.items'ta karsiligi olmayan ITEM entity yok",
+        stray_entities == 0,
+        f"basi bos ITEM entity: {stray_entities}",
+    )
+
+    # The hard blocker: dropping 'ITEM' from the check constraint fails if any
+    # surviving row still names an entity of that type.
+    referenced = owner.execute(
+        text(
+            """
+            SELECT
+                (SELECT count(*)
+                   FROM entity_merges em
+                  WHERE EXISTS (
+                      SELECT 1 FROM entities e
+                       WHERE e.entity_type = 'ITEM'
+                         AND e.id IN (em.source_entity_id, em.target_entity_id)))
+              + (SELECT count(*)
+                   FROM entity_relation er
+                  WHERE EXISTS (
+                      SELECT 1 FROM entities e
+                       WHERE e.entity_type = 'ITEM'
+                         AND e.id IN (er.subject_entity_id, er.object_entity_id)))
+            """
+        )
+    ).scalar()
+
+    record(
+        "Asama 6: ITEM entity'ye bakan merge/relation yok",
+        referenced == 0,
+        f"engelleyen kayit: {referenced}",
+    )
+
+
+def check_branch_guard(owner, app) -> None:
+    """The database refuses a holding hung on another tenant's branch.
+
+    The endpoint checks this in `_assert_branch_is_ours`, but the endpoint is not
+    the only writer that will ever exist. `fk_holdings_branch` does not help: a
+    foreign key confirms the branch exists, not that it is yours, and its check
+    runs outside row level security. The trigger is what makes the rule true for
+    every path, including a bulk import nobody has written yet.
+    """
+
+    # `control.branches` carries the same fail-closed policy as tenant.*, so an
+    # application session with no tenant bound sees nothing at all.
+    visible = app.execute(
+        text("SELECT count(*) FROM control.branches")
+    ).scalar()
+
+    record(
+        "control.branches tenant baglamasi olmadan gorunmez",
+        visible == 0,
+        f"gorunen sube: {visible}",
+    )
+
+    # The pair has to be read as the owner: the application role cannot see
+    # across tenants, which is the property under test rather than an obstacle.
+    pair = owner.execute(
+        text(
+            """
+            SELECT b1.tenant_id AS tenant_a, b2.id AS foreign_branch
+            FROM control.branches b1
+            JOIN control.branches b2 ON b2.tenant_id <> b1.tenant_id
+            LIMIT 1
+            """
+        )
+    ).mappings().first()
+
+    if pair is None:
+        record(
+            "Sube korumasi: yabanci subeye holding yazilamaz",
+            False,
+            "test edilecek iki kurum bulunamadi",
+        )
+        return
+
+    try:
+        app.execute(text("set local role libraryhub_tenant_app"))
+        app.execute(
+            text("select set_config(:name, :value, true)"),
+            {"name": "libraryhub.tenant_id", "value": str(pair["tenant_a"])},
+        )
+        app.execute(
+            text(
+                """
+                INSERT INTO tenant.holdings
+                    (id, tenant_id, branch_id, holding_type,
+                     local_holding_key, status, created_at, updated_at)
+                VALUES
+                    (gen_random_uuid(), :tenant_id, :branch_id, 'physical',
+                     'GUARD-CHECK', 'active', now(), now())
+                """
+            ),
+            {
+                "tenant_id": pair["tenant_a"],
+                "branch_id": pair["foreign_branch"],
+            },
+        )
+        app.rollback()
+
+        record(
+            "Sube korumasi: yabanci subeye holding yazilamaz",
+            False,
+            "IZIN VERILDI",
+        )
+
+    except Exception as exc:
+        app.rollback()
+
+        # Match on the whole message and truncate only for display: cutting to 90
+        # characters first once left "does not belon", and the check failed while
+        # the trigger was working perfectly.
+        full = str(exc)
+
+        record(
+            "Sube korumasi: yabanci subeye holding yazilamaz",
+            "does not belong" in full,
+            full.strip().splitlines()[0][:90],
+        )
 
 
 def main() -> int:
@@ -370,6 +584,10 @@ def main() -> int:
 
         print("\n-- yazma siniri --")
         check_tenant_role_jail(app)
+        check_branch_guard(owner, app)
+
+        print("\n-- Asama 6 hazirligi --")
+        check_phase6_readiness(owner)
 
     failed = [name for name, passed, _ in results if not passed]
     print()

@@ -23,14 +23,22 @@ target_metadata = Base.metadata
 def database_url() -> str:
     """Resolve the URL migrations connect with.
 
-    DATABASE_URL wins over the value committed in alembic.ini. That ini value is
-    kept only as a development fallback so offline SQL generation works without
-    an environment; the running configuration should come from the environment
-    like every other credential. Until this precedence existed, a deployment
-    that changed DATABASE_URL still ran migrations against whatever alembic.ini
-    happened to say.
+    Only the environment is trusted, and there is no fallback. `alembic.ini` used
+    to carry a development connection string with a password in it, which is a
+    credential committed to the repository; worse, a fallback can silently win or
+    silently lose, and that is how migrations end up running against the wrong
+    database. Refusing to guess is better than guessing wrong.
     """
-    return os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+    url = os.environ.get("DATABASE_URL")
+
+    if url:
+        return url
+
+    raise RuntimeError(
+        "DATABASE_URL is not set. Alembic will not fall back to a built-in "
+        "connection string: set DATABASE_URL to the database you intend to "
+        "migrate."
+    )
 
 
 def run_migrations_offline() -> None:

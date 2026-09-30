@@ -17,7 +17,15 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 #
 # APP_DATABASE_URL falls back to DATABASE_URL when unset, which keeps the
 # SQLite test suite and any single-credential setup working unchanged.
-DATABASE_URL = os.environ["DATABASE_URL"]
+try:
+    DATABASE_URL = os.environ["DATABASE_URL"]
+except KeyError as exc:
+    raise RuntimeError(
+        "DATABASE_URL is not set. The application will not fall back to a "
+        "built-in connection string: a default is how a deployment ends up "
+        "pointing at the wrong database, and it fails silently when it does."
+    ) from exc
+
 APP_DATABASE_URL = os.environ.get("APP_DATABASE_URL") or DATABASE_URL
 
 engine = create_engine(

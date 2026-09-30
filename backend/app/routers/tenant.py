@@ -50,15 +50,18 @@ _CONSTRAINT_RESPONSES = {
         "Bu kayıt zaten var (tekrar eden bir alan).",
     ),
     "23514": (
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        # Literal rather than `status.HTTP_422_UNPROCESSABLE_ENTITY`, which
+        # Starlette has renamed; the number is the same either way and does not
+        # depend on which version is installed.
+        422,
         "Girilen değer izin verilen değerlerden biri değil.",
     ),
     "23503": (
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        422,
         "Başvurulan kayıt bulunamadı.",
     ),
     "23502": (
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        422,
         "Zorunlu bir alan boş bırakılmış.",
     ),
 }
@@ -80,6 +83,7 @@ def _translate(exc: IntegrityError) -> HTTPException:
     origin = getattr(exc, "orig", None)
     code = _sqlstate(origin)
     constraint = getattr(getattr(origin, "diag", None), "constraint_name", None)
+    primary = getattr(getattr(origin, "diag", None), "message_primary", None)
 
     # An error reduced to a friendly sentence still has to be diagnosable.
     logger.warning(
@@ -99,10 +103,17 @@ def _translate(exc: IntegrityError) -> HTTPException:
 
     status_code, message = response
 
-    return HTTPException(
-        status_code=status_code,
-        detail=f"{message} ({constraint})" if constraint else message,
-    )
+    if constraint:
+        detail = f"{message} ({constraint})"
+    elif primary:
+        # A trigger raises without a constraint name, and its message is the only
+        # useful part -- without this the branch guard would report "not one of
+        # the allowed values", which is both wrong and unactionable.
+        detail = f"{message} {primary}"
+    else:
+        detail = message
+
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 def _assert_branch_is_ours(db: Session, user: User, branch_id: UUID) -> None:
@@ -458,7 +469,7 @@ def _update(
 
     if not changes:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=422,
             detail="Değiştirilecek alan gönderilmedi.",
         )
 
