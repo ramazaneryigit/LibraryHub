@@ -19,6 +19,8 @@ from .routers import (
     search,
     reconciliation,
     ingestion,
+    auth,
+    tenant,
 )
 
 
@@ -44,6 +46,8 @@ app.include_router(items.router)
 app.include_router(search.router)
 app.include_router(reconciliation.router)
 app.include_router(ingestion.router)
+app.include_router(auth.router)
+app.include_router(tenant.router)
 
 app.mount(
     "/static",
