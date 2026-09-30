@@ -42,7 +42,7 @@ class Work(Base):
             postgresql_using="gin",
         ).ddl_if(dialect="postgresql"),
         # The index that actually serves matching: works.normalized_title is
-        # filled by the ORM event below with app.normalization.normalize_text,
+        # filled by the ORM event below with app.core.text.normalize_text,
         # so the stored value and the probe value are normalized identically.
         # See docs/architecture-v2.md §15.6.
         Index(

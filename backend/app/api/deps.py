@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from ..core.security import as_utc, hash_session_token
 from ..db.models import User, UserSession
-from ..db import get_db, tenant_session
+from ..db import OwnerSessionLocal, get_db, tenant_session
 
 __all__ = ["current_session", "current_user", "require_role", "tenant_db"]
 
@@ -174,3 +174,25 @@ def tenant_db(user: User = Depends(current_user)):
 
     with tenant_session(user.tenant_id) as db:
         yield db
+
+
+def owner_db(user: User = Depends(require_admin)):
+    """An owner-credential session, for reading across every tenant.
+
+    `tenant.*` is protected by row level security keyed on `libraryhub.tenant_id`,
+    and the application role is subject to it -- which is the point. A reviewer
+    has to see the proposals every institution has raised at once, and there is no
+    single tenant to bind, so under the application role the policies would
+    correctly show nothing at all.
+
+    That makes this the most powerful session in the application, and it is
+    reachable only by an administrator: the chain starts at `require_admin`, so a
+    librarian's request never gets a connection. Admin routes only.
+    """
+
+    db = OwnerSessionLocal()
+
+    try:
+        yield db
+    finally:
+        db.close()

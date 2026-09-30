@@ -686,6 +686,65 @@ def check_subtype_insert_order(engine) -> None:
                 )
 
 
+def check_app_imports_resolve() -> None:
+    """Every absolute `app.*` import in the source points at something real.
+
+    The models moved into `app/db/models/` and three modules were renamed into
+    `app/core/`. Two absolute imports were missed, both in files that nothing
+    else imports: a script, and an Alembic revision. Neither the test suite nor a
+    reading of the diff would have found them -- one is only ever run by hand, and
+    the other had already been applied on this database.
+
+    The revision is the reason this is a check at all. Its imports are resolved
+    when the revision *runs*, so a database built from scratch would have stopped
+    dead partway through the migration history -- while this one, already past
+    that step, worked perfectly and said nothing.
+
+    Only absolute `app.*` imports are covered here. Relative imports inside the
+    package are proven by the application starting, which every other check in
+    this file already depends on.
+    """
+
+    import ast
+    import importlib.util
+
+    backend = Path(__file__).resolve().parents[1]
+    missing = []
+
+    for path in sorted(backend.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or not node.module:
+                continue
+
+            if node.module != "app" and not node.module.startswith("app."):
+                continue
+
+            try:
+                found = importlib.util.find_spec(node.module)
+            except (ImportError, ValueError):
+                found = None
+
+            if found is None:
+                missing.append(
+                    f"{path.relative_to(backend).as_posix()}:{node.lineno} "
+                    f"{node.module}"
+                )
+
+    record(
+        "Her app.* import gercek bir modulu gosteriyor",
+        not missing,
+        "; ".join(missing[:4]) if missing else "temiz",
+    )
+
+
 def main() -> int:
     owner_engine = create_engine(OWNER_URL)
     app_engine = create_engine(APP_URL)
@@ -714,6 +773,9 @@ def main() -> int:
 
         print("\n-- yazma yolu --")
         check_subtype_insert_order(owner_engine)
+
+        print("\n-- kaynak tutarliligi --")
+        check_app_imports_resolve()
 
         print("\n-- Asama 6 dogrulamasi --")
         check_legacy_item_surface()

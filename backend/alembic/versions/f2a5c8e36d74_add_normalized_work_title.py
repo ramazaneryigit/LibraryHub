@@ -56,7 +56,14 @@ def upgrade() -> None:
     # do this without running env.py -- and env.py is what puts the backend
     # directory on sys.path. A module-level `from app...` import therefore made
     # `alembic heads` fail with ModuleNotFoundError.
-    from app.normalization import normalize_text
+    #
+    # Path corrected from `app.normalization` when the module moved to
+    # `app.core.text` (docs/architecture-v2.md §0.19). The revision had already
+    # been applied here, so nothing was visibly broken -- but the import is
+    # resolved when the revision *runs*, which means a database built from
+    # scratch would have stopped dead at this step. Same function, same
+    # behaviour; only the path changed.
+    from app.core.text import normalize_text
 
     op.add_column(
         "works",

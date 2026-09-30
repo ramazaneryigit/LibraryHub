@@ -1460,6 +1460,85 @@ ortamındaki platform hesabı: `platform@libraryhub.local` / `platform-dev-parol
 
 ---
 
+### 0.21 Yönetici tarafı öneri inceleme uçları — TAMAMLANDI
+
+#### Öncesi
+
+Öneri incelemesi yalnızca `review_proposal.py` ile, sahip kimlik bilgisiyle ve bir
+terminalden yapılabiliyordu. `reviewed_by` komut satırına yazılan bir **addı**:
+kimlik değil, beyan kaydediyordu. Panel için gereken şey buydu ve §0.20 onu mümkün kıldı.
+
+#### Uçlar
+
+`/api/v1/admin/proposals` altında beş uç: liste, özet, tek kayıt, karar, uygulama.
+Tamamı `require_admin` arkasında. `reviewed_by` artık **oturumdaki hesabın e-postası** —
+gövdeden gelen bir alan değil, çünkü kendi karar vericisini adlandırabilen bir gövde
+istemcinin istediği kişiyi kaydederdi.
+
+**Karar ve uygulama ayrı uçlar.** Bir düzeltmenin *ilke olarak* doğru olduğuna inanan
+bir gözden geçiren, JSON'un tesadüfen aldığı biçimi de onaylamamalı; "veritabanı bu
+değeri kabul etti" ile "bu geçerli bir yayın tarihi" aynı iddia değil. Uygulama ayrıca
+yalnızca **kabul edilmiş** bir öneri için çalışır: reddeden bir yönetici başka bir uca
+sorarak onu uygulayamamalı.
+
+#### Neden ikinci bir motor
+
+`tenant.change_proposals` RLS'e tabi ve politika `libraryhub.tenant_id`'ye bağlı.
+Gözden geçirenin bağlayacağı **tek bir kiracı yok** — uygulama rolüyle doğru davranış
+hiçbir şey görmemektir. Bu yüzden `owner_engine` var ve yalnızca bu uçlardan erişilebilir;
+zincir `require_admin`'de başlar, orada bitmez.
+
+#### Mantık tek yerde
+
+Kurallar `app/services/proposal_review.py`'de ve hem API hem CLI onu kullanıyor. Script
+kendi kopyasını taşıyordu ve kopya, adı değişmiş bir modülü import etmeye devam ediyordu.
+
+#### Bu sırada bulunan gerçek hata: migration yeniden oynatılamıyordu
+
+`f2a5c8e36d74_add_normalized_work_title.py` içinde `from app.normalization import
+normalize_text` kalmıştı. Modül `app/core/text.py` olmuştu; import **revizyon
+çalışırken** çözülüyor, yani **sıfırdan kurulan bir veritabanı bu adımda dururdu**.
+Burada o adım çoktan geçildiği için hiçbir şey görünmüyordu ve test paketi bunu
+göremezdi — migration'lar testlerde koşmuyor.
+
+Kalıcı koruma: `run_scale_checks.py` artık **her mutlak `app.*` importunun gerçek bir
+modülü gösterdiğini** doğruluyor. Test edildi: kasıtlı olarak bozulduğunda
+`scripts/review_proposal.py:218 app.normalization` diyerek yakalıyor.
+
+#### Ve test motorunun görmediği üç şey
+
+Yazma yolu SQLite'tan erişilemezdi ve bu üç ayrı sebeple ortaya çıktı:
+
+1. **`str(uuid)` eşleşmiyor.** PostgreSQL `uuid` sütununa tiresiz dizeyi kabul eder;
+   SQLite `Uuid` tipini `CHAR(32)` — tiresiz hex — olarak saklar. `str()` ile sorgulamak
+   sessizce hiçbir şey bulmaz. Çözüm dize uydurmak değil, **tipi bildirmek**:
+   `bindparam(..., type_=Uuid)`, dönüşümü motora bırakır.
+2. **`now()` SQLite'ta yok.** PostgreSQL'e özel. `CURRENT_TIMESTAMP` ikisinde de var.
+3. **`public.works` SQLite'ta yok.** Şema öneki yazma yolunu tamamen test dışı bırakıyordu.
+   Tablo adları artık şemasız: her iki rolün `search_path`'inde `public` var ve plane
+   zaten hangi oturumun çalıştırdığıyla belirli — adı tekrarlamak hiçbir şey kazandırmıyor,
+   testleri kaybettiriyordu.
+
+Üçü de aynı desen: **test motoru çalışamayacak koda evet diyordu.**
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **106/106** (15 yeni) |
+| Senaryo kontrolleri | **29/29** (import tripwire'ı dahil) |
+| `alembic check` | temiz, tek head `f5b2c8d36a94` |
+| `/openapi.json` | 57 yol, tamamı sürümlü, 0 sürümsüz |
+| Platform yöneticisi ile liste/karar/uygula | çalışıyor, `reviewed_by` = oturum e-postası |
+| Kütüphaneci ile `/admin/*` | 403 |
+| Oturumsuz `/admin/*` | 401 |
+| Karar verilmeden uygulama | 409 |
+| Beyaz liste dışı alan | yazılmıyor, `dropped` içinde bildiriliyor |
+| CLI `--list` / `--accept --apply` | aynı servisle çalışıyor |
+| Veri | `works=316 entities=479 items=849 holdings=946` — değişmedi |
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman

@@ -10,16 +10,25 @@ is what almost every call site wants and it keeps the engine plumbing in one
 place.
 """
 
-from .base import Base, SessionLocal, engine, utcnow
+from .base import (
+    Base,
+    OwnerSessionLocal,
+    SessionLocal,
+    engine,
+    owner_engine,
+    utcnow,
+)
 from .session import TENANT_ROLE, TENANT_SETTING, get_db, tenant_session
 
 __all__ = [
     "Base",
+    "OwnerSessionLocal",
     "SessionLocal",
     "TENANT_ROLE",
     "TENANT_SETTING",
     "engine",
     "get_db",
+    "owner_engine",
     "tenant_session",
     "utcnow",
 ]

@@ -1,4 +1,4 @@
-"""Review and apply tenant change proposals.
+"""Review and apply tenant change proposals, from a console.
 
 The two halves of one conversation. A tenant cannot write the global plane --
 PostgreSQL refuses it -- so an institution that finds a wrong publication date
@@ -12,17 +12,17 @@ reviewer who believes a correction is right in principle also silently approves
 whatever shape the JSON happens to have, and "the database accepted this value"
 is not the same claim as "this is a valid publication date".
 
-The whitelist is deliberately short. A tenant may propose a change to shared
-bibliographic description; they may not propose their way into the identity
-registry, into `entity_merges`, or into anything that would let a correction
-become a merge.
+Prefer the API
+--------------
+The same work is available to an administrator over HTTP, at
+`/api/v1/admin/proposals`, and there `reviewed_by` comes from an authenticated
+session. Here it is a name typed on the command line, which records a claim rather
+than an identity -- so this tool is for a machine with the owner credential and no
+browser, not for routine review.
 
-There is no administrator identity yet
---------------------------------------
-`reviewed_by` records a name given on the command line, not an authenticated
-account. That is honest about where this stands: the panel phase needs a real
-administrator identity, and until it exists this is a privileged console tool
-like `create_user.py` and `register_domain.py`, run with the owner credential.
+The rules themselves live in `app/services/proposal_review.py`, shared with those
+endpoints. This file used to carry its own copy of them, and the copy went on
+importing a module that had been renamed.
 
 Usage
 -----
@@ -36,95 +36,21 @@ Usage
 """
 
 import argparse
-import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 
-
-# Which fields a proposal is allowed to actually move, per entity kind. The table
-# and column names come from here and never from the proposal, so a crafted
-# `field` cannot reach a column this list does not name.
-#
-# `timestamp` is stated per table rather than assumed: none of these three has an
-# `updated_at`, and the first version of this script wrote `updated_at = now()`
-# for all of them and failed on every apply.
-APPLICABLE_FIELDS = {
-    "work": {
-        "table": "public.works",
-        "key": "entity_id",
-        "timestamp": None,
-        "fields": (
-            "canonical_title",
-            "original_title",
-            "original_language",
-            "description",
-        ),
-    },
-    "expression": {
-        "table": "public.expressions",
-        "key": "entity_id",
-        "timestamp": None,
-        "fields": (
-            "language",
-            "expression_form",
-            "description",
-        ),
-    },
-    "manifestation": {
-        "table": "public.manifestations",
-        "key": "entity_id",
-        "timestamp": None,
-        "fields": (
-            "publication_statement",
-            "publication_date",
-            "edition_statement",
-            "carrier_type",
-            "extent",
-            "notes",
-        ),
-    },
-}
-
-
-PROPOSAL_SELECT = (
-    "id, tenant_id, submitted_by_email, change_type, target_entity_type, "
-    "target_entity_id, field_changes, rationale, evidence, status, reviewed_by, "
-    "reviewed_at, review_note, applied_at, applied_fields, created_at"
+from app.services.proposal_review import (
+    apply_proposal,
+    as_changes,
+    list_proposals,
+    load_proposal,
+    record_decision,
 )
-
-
-def as_list(value) -> list:
-    """`field_changes` comes back as a list, or as text on a driver without a
-    JSON loader. Both are accepted so the tool does not depend on which."""
-
-    if value is None:
-        return []
-
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return []
-
-    return value
-
-
-def load(connection, proposal_id: str):
-    return connection.execute(
-        text(
-            f"SELECT {PROPOSAL_SELECT}, "
-            "(SELECT t.display_name FROM control.tenants t "
-            " WHERE t.id = p.tenant_id) AS tenant_name "
-            "FROM tenant.change_proposals p WHERE p.id = :id"
-        ),
-        {"id": proposal_id},
-    ).mappings().first()
 
 
 def show(proposal) -> None:
@@ -138,7 +64,7 @@ def show(proposal) -> None:
     print(f"  gerekce    : {proposal['rationale']}")
     print(f"  kaynak     : {proposal['evidence']}")
 
-    changes = as_list(proposal["field_changes"])
+    changes = as_changes(proposal["field_changes"])
 
     print(f"  degisiklik : {len(changes)}")
 
@@ -154,105 +80,32 @@ def show(proposal) -> None:
 
     if proposal["applied_at"]:
         print(f"  uygulandi  : {proposal['applied_at']} "
-              f"{as_list(proposal['applied_fields'])}")
+              f"{as_changes(proposal['applied_fields'])}")
 
 
 def do_apply(connection, proposal) -> int:
-    """Write the whitelisted fields, and say what it refused."""
+    """Write the whitelisted fields, and say what it refused.
 
-    target_id = proposal["target_entity_id"]
+    The rules live in `app.services.proposal_review`, shared with the admin API.
+    This function is only the console's way of reporting the outcome.
+    """
 
-    if target_id is None:
-        print("  UYGULANAMADI: ekleme onerileri bu araçla uygulanmaz; "
-              "kaydı bir yönetici oluşturmalı.")
+    result = apply_proposal(connection, proposal)
+
+    if not result.ok:
+        print(f"  UYGULANAMADI: {result.reason}")
+
+        if result.dropped:
+            print(f"    elenenler: {result.dropped}")
+
         return 1
 
-    entity_type = connection.execute(
-        text("SELECT entity_type FROM entities WHERE id = :id"),
-        {"id": target_id},
-    ).scalar()
-
-    if entity_type is None:
-        print(f"  UYGULANAMADI: {target_id} diye bir entity yok.")
-        return 1
-
-    kind = entity_type.lower()
-    allowed = APPLICABLE_FIELDS.get(kind)
-
-    changes = as_list(proposal["field_changes"])
-
-    if allowed is None:
-        print(f"  UYGULANAMADI: '{kind}' tipi için uygulanabilir alan tanımlı "
-              "değil.")
-        return 1
-
-    # A proposal carries what the tenant *believes* the target is; the registry
-    # is what it actually is. A disagreement is worth stopping for.
-    claimed = (proposal["target_entity_type"] or "").lower()
-
-    if claimed and claimed != kind:
-        print(f"  UYGULANAMADI: öneri '{claimed}' diyor, kayıt '{kind}'.")
-        return 1
-
-    assignments = {}
-    dropped = []
-
-    for change in changes:
-        field = change.get("field")
-
-        if field in allowed["fields"]:
-            assignments[field] = change.get("proposed")
-        else:
-            dropped.append(field)
-
-    if not assignments:
-        print("  UYGULANAMADI: beyaz listedeki hiçbir alan önerilmemiş.")
-        print(f"    elenenler: {dropped}")
-        return 1
-
-    # `public.works.normalized_title` is maintained by an ORM event listener, and
-    # raw SQL does not trigger it. Leaving it stale would silently break matching
-    # for exactly the record somebody just corrected -- and it is computed from
-    # the column being changed, so it cannot be forgotten here.
-    if allowed["table"] == "public.works" and "canonical_title" in assignments:
-        from app.normalization import normalize_text
-
-        assignments["normalized_title"] = normalize_text(
-            assignments["canonical_title"] or ""
-        )
-
-    rendered = ", ".join(f"{name} = :{name}" for name in assignments)
-
-    if allowed["timestamp"]:
-        rendered += f", {allowed['timestamp']} = now()"
-
-    connection.execute(
-        text(
-            f"UPDATE {allowed['table']} SET {rendered} "
-            f"WHERE {allowed['key']} = :target_id"
-        ),
-        {**assignments, "target_id": target_id},
-    )
-
-    connection.execute(
-        text(
-            "UPDATE tenant.change_proposals "
-            "SET status = 'applied', applied_at = now(), "
-            "applied_fields = :applied, updated_at = now() "
-            "WHERE id = :id"
-        ),
-        {
-            "id": proposal["id"],
-            "applied": json.dumps(sorted(assignments)),
-        },
-    )
-
-    print(f"  UYGULANDI: {allowed['table']} güncellendi.")
-    for name, value in assignments.items():
+    print("  UYGULANDI: paylaşılan kayıt güncellendi.")
+    for name, value in result.applied.items():
         print(f"    {name} = {value!r}")
 
-    if dropped:
-        print(f"  beyaz listede olmadığı için elenenler: {dropped}")
+    if result.dropped:
+        print(f"  beyaz listede olmadığı için elenenler: {result.dropped}")
 
     return 0
 
@@ -274,21 +127,11 @@ def main() -> int:
 
     with engine.begin() as connection:
         if args.list:
-            query = (
-                f"SELECT {PROPOSAL_SELECT}, "
-                "(SELECT t.display_name FROM control.tenants t "
-                " WHERE t.id = p.tenant_id) AS tenant_name "
-                "FROM tenant.change_proposals p"
+            rows = list_proposals(
+                connection,
+                status=args.status,
+                limit=None,
             )
-            params: dict = {}
-
-            if args.status != "all":
-                query += " WHERE status = :status"
-                params["status"] = args.status
-
-            query += " ORDER BY created_at"
-
-            rows = connection.execute(text(query), params).mappings().all()
 
             if not rows:
                 print(f"'{args.status}' durumunda öneri yok.")
@@ -305,7 +148,7 @@ def main() -> int:
             return 0
 
         if args.show:
-            proposal = load(connection, args.show)
+            proposal = load_proposal(connection, args.show)
 
             if proposal is None:
                 print("Öneri bulunamadı.")
@@ -322,7 +165,7 @@ def main() -> int:
         if not args.reviewer:
             parser.error("--reviewer gerekli: kararı kimin verdiği kaydedilmeli")
 
-        proposal = load(connection, proposal_id)
+        proposal = load_proposal(connection, proposal_id)
 
         if proposal is None:
             print("Öneri bulunamadı.")
@@ -336,20 +179,20 @@ def main() -> int:
 
         decision = "accepted" if args.accept else "rejected"
 
-        connection.execute(
-            text(
-                "UPDATE tenant.change_proposals "
-                "SET status = :status, reviewed_by = :reviewer, "
-                "reviewed_at = now(), review_note = :note, updated_at = now() "
-                "WHERE id = :id"
-            ),
-            {
-                "id": proposal_id,
-                "status": decision,
-                "reviewer": args.reviewer,
-                "note": args.note,
-            },
+        # Carries the same `status = 'pending'` guard as the admin endpoint, so a
+        # decision recorded elsewhere between the read above and here writes
+        # nothing rather than overwriting it.
+        changed = record_decision(
+            connection,
+            proposal_id,
+            decision,
+            args.reviewer,
+            args.note,
         )
+
+        if not changed:
+            print("\n  KARAR YAZILMADI: öneri bu sırada değişti; yeniden okuyun.")
+            return 1
 
         print(f"\n  KARAR: {decision} ({args.reviewer})")
 
