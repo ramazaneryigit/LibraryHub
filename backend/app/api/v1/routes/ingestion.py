@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ...deps import require_admin
 from ....db import get_db
 from ....services.ingestion import (
     ingest_jsonl_job,
@@ -33,7 +34,7 @@ class IngestionRequest(BaseModel):
     records: list[IngestionRecord]
 
 
-@router.post("/source-records")
+@router.post("/source-records", dependencies=[Depends(require_admin)])
 def ingest_records(
     payload: IngestionRequest,
     db: Session = Depends(get_db),
@@ -49,7 +50,7 @@ def ingest_records(
         records=records,
     )
     
-@router.post("/jsonl")
+@router.post("/jsonl", dependencies=[Depends(require_admin)])
 def ingest_jsonl_file(
     source_system: str = Form(...),
     batch_size: int = Form(500),

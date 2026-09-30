@@ -134,6 +134,20 @@ def require_role(*allowed: str):
     return dependency
 
 
+# The two tiers the global plane is guarded with.
+#
+# Creating something on the shared plane -- a work nobody has catalogued yet, a
+# person, a concept -- is ordinary cataloguing and needs a member of staff.
+# Changing an *identity* -- merging two persons, deciding a reconciliation
+# candidate, deleting a mapping, loading a batch -- cannot be undone by editing a
+# row afterwards, and needs an administrator.
+#
+# Reads are untouched: they are public by design, and `viewer` exists to say that
+# an account may read without writing.
+require_staff = require_role("admin", "librarian")
+require_admin = require_role("admin")
+
+
 def tenant_db(user: User = Depends(current_user)):
     """A session scoped to the caller's tenant, enforced by the database.
 

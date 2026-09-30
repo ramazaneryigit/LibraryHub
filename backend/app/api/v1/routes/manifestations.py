@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from ...deps import require_staff
 from ....db import get_db
 from ....core.ids import uuid7
 from ....db.models import Entity, Expression, Manifestation
@@ -24,7 +25,7 @@ class ManifestationCreate(BaseModel):
     notes: str | None = None
 
 
-@router.post("/manifestations", status_code=201)
+@router.post("/manifestations", status_code=201, dependencies=[Depends(require_staff)])
 def create_manifestation(
     payload: ManifestationCreate,
     db: Session = Depends(get_db),

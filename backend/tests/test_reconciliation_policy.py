@@ -3,6 +3,7 @@ import os
 import re
 import unittest
 import uuid
+from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault('DATABASE_URL', 'sqlite://')
 
@@ -12,8 +13,24 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from app.core.ids import uuid7
+from app.core.security import (
+    hash_password,
+    hash_session_token,
+    new_session_token,
+)
 from app.db import Base, get_db
-from app.db.models import Entity, EntityMerge, SourceRecord, Work, ReconciliationCandidate, ReconciliationDecision
+from app.db.models import (
+    Entity,
+    EntityMerge,
+    ReconciliationCandidate,
+    ReconciliationDecision,
+    SourceRecord,
+    Tenant,
+    User,
+    UserSession,
+    Work,
+)
 from app.api.v1.routes.reconciliation import router
 from app.services.reconciliation import compare_field, generate_work_candidates
 
@@ -70,7 +87,40 @@ class PolicyTests(unittest.TestCase):
         app = FastAPI()
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: self.db
+
+        # The reconciliation routes write the global plane, which now requires an
+        # administrator. These tests go through a real session rather than
+        # overriding the dependency, so the authorization path is exercised
+        # rather than bypassed.
+        tenant = Tenant(slug='test', display_name='Test Kütüphanesi')
+        self.db.add(tenant)
+        self.db.flush()
+
+        admin = User(
+            tenant_id=tenant.id,
+            email='admin@test.edu.tr',
+            display_name='Test Yönetici',
+            password_hash=hash_password('parola-12345'),
+            role='admin',
+            email_verified_at=datetime.now(timezone.utc),
+        )
+        self.db.add(admin)
+        self.db.flush()
+
+        token = new_session_token()
+
+        self.db.add(
+            UserSession(
+                id=uuid7(),
+                user_id=admin.id,
+                token_hash=hash_session_token(token),
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            )
+        )
+        self.db.commit()
+
         self.client = TestClient(app)
+        self.client.headers.update({'Authorization': f'Bearer {token}'})
 
     def tearDown(self):
         self.client.close()

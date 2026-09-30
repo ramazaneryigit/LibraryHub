@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from ...deps import require_admin, require_staff
 from ....db import get_db
 from ....core.ids import uuid7
 from ....db.models import Entity, Identifier, Nomen, Person
@@ -87,7 +88,7 @@ def find_person_duplicates(
     ]
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[Depends(require_staff)])
 def create_person(
     payload: PersonCreate,
     force_create: bool = False,
@@ -249,7 +250,7 @@ def get_person(
             for nomen in nomens
         ],
     }
-@router.post("/{entity_id}/nomens", status_code=201)
+@router.post("/{entity_id}/nomens", status_code=201, dependencies=[Depends(require_staff)])
 def create_nomen(
     entity_id: UUID,
     payload: NomenCreate,
@@ -376,7 +377,7 @@ def get_person_works(
         "works": works,
     }
 
-@router.post("/{source_person_id}/merge/{target_person_id}")
+@router.post("/{source_person_id}/merge/{target_person_id}", dependencies=[Depends(require_admin)])
 def merge_persons(
     source_person_id: UUID,
     target_person_id: UUID,

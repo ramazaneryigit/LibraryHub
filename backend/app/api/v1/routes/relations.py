@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ...deps import require_staff
 from ....db import get_db
 from ....db.models import Entity, EntityRelation
 from ....services.entity_merge import resolve_canonical_entity_id
@@ -148,7 +149,7 @@ def list_entity_relations(
         "relations": relations,
     }
 
-@router.post("/{entity_id}", status_code=201)
+@router.post("/{entity_id}", status_code=201, dependencies=[Depends(require_staff)])
 def create_entity_relation(
     entity_id: UUID,
     payload: EntityRelationCreate,

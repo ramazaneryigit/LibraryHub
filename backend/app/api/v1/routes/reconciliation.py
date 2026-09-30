@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ...deps import require_admin, require_staff
 from ....db import get_db
 from ....db.models import (
     Entity,
@@ -171,7 +172,7 @@ def get_source_record_reconciliation(
         "decision": decision_result,
     }
 
-@router.post("/source-records/{source_record_id}/decision", status_code=201)
+@router.post("/source-records/{source_record_id}/decision", status_code=201, dependencies=[Depends(require_admin)])
 def create_reconciliation_decision(
     source_record_id: uuid.UUID,
     payload: ReconciliationDecisionCreate,
@@ -309,9 +310,7 @@ def create_reconciliation_decision(
         "evidence_snapshot": decision.evidence_snapshot,
     }
 
-@router.post(
-    "/source-records/{source_record_id}/generate-candidates"
-)
+@router.post("/source-records/{source_record_id}/generate-candidates", dependencies=[Depends(require_staff)])
 def generate_reconciliation_candidates(
     source_record_id: uuid.UUID,
     db: Session = Depends(get_db),

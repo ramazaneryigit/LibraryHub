@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from ...deps import require_staff
 from ....services.entity_merge import resolve_canonical_entity_id
 
 from ....db import get_db
@@ -61,7 +62,7 @@ def get_entity_identifiers(
         ],
     }
 
-@router.post("/entities/{entity_id}/identifiers", status_code=201)
+@router.post("/entities/{entity_id}/identifiers", status_code=201, dependencies=[Depends(require_staff)])
 def create_entity_identifier(
     entity_id: UUID,
     payload: IdentifierCreate,

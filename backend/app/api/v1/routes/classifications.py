@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from ...deps import require_admin, require_staff
 from ....services.classification_validation import (
     create_automatic_validation,
     revalidate_classification,
@@ -207,7 +208,7 @@ class ClassificationValidationCreate(BaseModel):
 # ============================================================
 
 
-@router.post("/vocabulary-schemes")
+@router.post("/vocabulary-schemes", dependencies=[Depends(require_staff)])
 def create_vocabulary_scheme(
     payload: VocabularySchemeCreate,
     db: Session = Depends(get_db),
@@ -285,7 +286,7 @@ def list_vocabulary_schemes(
 # ============================================================
 
 
-@router.post("/vocabulary-schemes/{scheme_id}/editions")
+@router.post("/vocabulary-schemes/{scheme_id}/editions", dependencies=[Depends(require_staff)])
 def create_vocabulary_scheme_edition(
     scheme_id: UUID,
     payload: VocabularySchemeEditionCreate,
@@ -414,7 +415,7 @@ def get_vocabulary_scheme_editions(
 # ============================================================
 
 
-@router.post("/classifications")
+@router.post("/classifications", dependencies=[Depends(require_staff)])
 def create_classification(
     payload: ClassificationCreate,
     db: Session = Depends(get_db),
@@ -584,7 +585,7 @@ def get_classification(
 # ============================================================
 
 
-@router.post("/works/{work_entity_id}/classifications")
+@router.post("/works/{work_entity_id}/classifications", dependencies=[Depends(require_staff)])
 def assign_work_classification(
     work_entity_id: UUID,
     payload: WorkClassificationCreate,
@@ -758,7 +759,7 @@ def get_work_classifications(
         "classifications": classifications,
     }
     
-@router.post("/classification-mappings")
+@router.post("/classification-mappings", dependencies=[Depends(require_staff)])
 def create_classification_mapping(
     payload: ClassificationMappingCreate,
     db: Session = Depends(get_db),
@@ -1031,7 +1032,7 @@ def get_classification_mappings(
     }
 
 
-@router.delete("/classification-mappings/{mapping_id}")
+@router.delete("/classification-mappings/{mapping_id}", dependencies=[Depends(require_admin)])
 def delete_classification_mapping(
     mapping_id: UUID,
     db: Session = Depends(get_db),
@@ -1060,7 +1061,7 @@ def delete_classification_mapping(
 # ============================================================
 
 
-@router.post("/source-classifications")
+@router.post("/source-classifications", dependencies=[Depends(require_staff)])
 def create_source_classification(
     payload: SourceClassificationCreate,
     db: Session = Depends(get_db),
@@ -1196,7 +1197,7 @@ def create_source_classification(
 # ============================================================
 
 
-@router.post("/classification-validations")
+@router.post("/classification-validations", dependencies=[Depends(require_staff)])
 def create_classification_validation(
     payload: ClassificationValidationCreate,
     db: Session = Depends(get_db),
@@ -1414,7 +1415,7 @@ def get_work_source_classifications(
         "source_classifications": results,
     }
     
-@router.post("/source-classifications/{source_classification_id}/revalidate")
+@router.post("/source-classifications/{source_classification_id}/revalidate", dependencies=[Depends(require_staff)])
 def revalidate_source_classification(
     source_classification_id: UUID,
     db: Session = Depends(get_db),

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ...deps import require_staff
 from ....db import get_db
 from ....db.models import (
     Entity,
@@ -26,7 +27,7 @@ class AgentRelationCreate(BaseModel):
     role: str
 
 
-@router.post("/{work_entity_id}/agents", status_code=201)
+@router.post("/{work_entity_id}/agents", status_code=201, dependencies=[Depends(require_staff)])
 def add_work_agent(
     work_entity_id: UUID,
     payload: AgentRelationCreate,

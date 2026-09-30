@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from ...deps import require_staff
 from ....db import get_db
 from ....core.ids import uuid7
 from ....db.models import Entity, Expression, Work
@@ -21,7 +22,7 @@ class ExpressionCreate(BaseModel):
     description: str | None = None
 
 
-@router.post("/expressions", status_code=201)
+@router.post("/expressions", status_code=201, dependencies=[Depends(require_staff)])
 def create_expression(
     payload: ExpressionCreate,
     db: Session = Depends(get_db),

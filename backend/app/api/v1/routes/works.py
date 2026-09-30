@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ...deps import require_staff
 from ....db import get_db
 from ....core.ids import uuid7
 from ....db.models import Entity, Work
@@ -61,7 +62,7 @@ def list_works(
     }
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[Depends(require_staff)])
 def create_work(
     payload: WorkCreate,
     db: Session = Depends(get_db),
