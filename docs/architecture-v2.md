@@ -3631,6 +3631,22 @@ Kullanıcının listesi: konu dağılımı, koleksiyon geliştirme kararları, y
 kaynaklar, en çok okunanlar, kim ne zaman değiştirdi, ödünç ve gecikme sayıları.
 Aşama C'ye bağlı.
 
+#### Aşama E ve sonrası — merkezî yapı, beş paydaş
+
+Platformun akademisyen, yayınevi, ISBN ajansı ve veritabanı şirketlerine açılması;
+ayrıca bunların hepsinin üstünde duran **provenance / beyan** altyapısı. Ayrı bir
+belgede planlandı: **[`docs/merkezi-yapi-plani.md`](merkezi-yapi-plani.md)**.
+
+Özet: `public.field_assertions` (bugün **yok**) her paydaşın "bunu ben söylüyorum"
+dediği yerdir; paydaş tipleri ve kapsamlı yazma hakkı onun üstüne gelir. Ölçüldü:
+`agent_type='publisher'`, `account_kind='corporate'`, `holdings.access_url`,
+`identifiers` (ORCID/ISBN) ve `source_records` **zaten hazır** — eksik olan model
+değil, **kimin neyi beyan edebileceği**.
+
+Altı karar onay bekliyor (P1–P6); en ağırı P1: *platform otorite mi, beyan merkezi
+mi?* Öneri, bugüne kadarki öneri akışıyla tutarlı olarak **beyan merkezi,
+küratörlü**.
+
 #### Kalan küçük işler
 
 1. `docs/reconciliation-policy.md` — "33 isolated SQLite test pass" ifadesi artık
