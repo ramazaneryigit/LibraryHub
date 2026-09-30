@@ -1735,6 +1735,90 @@ kalmasına yol açıyordu.
 
 ---
 
+### 0.25 Search Plane'e giden ucuz adım: transactional outbox — TAMAMLANDI
+
+#### Neden bu, neden şimdi
+
+§9.1 diyor ki: **PostgreSQL doğruluk kaynağı kalır**, arama motoru sonra gelir —
+bugünkü problem motor eksikliği değil, mevcut aramanın yavaşlığı (§15.2: tek sorgu
+944 ms tepeye vurdu). §9.2 ise geçişi *mümkün kılan* ucuz adımı tarif ediyor.
+
+Gerekçe şu: outbox olmadan, "artık event-driven olduk" kararını sonradan almak
+**her yazma yolunu yeniden ele almayı** gerektirir — ve yazma yolu her aşamada
+çoğalıyor. Bu tablo o kararın ucuz ucu: bir tablo, bir kısmi index, sıfır
+operasyonel yük.
+
+#### Olayı uygulama değil, tetikleyici yazar
+
+Bir yazma yolunun "olayı da eklemeyi hatırlaması" gerekiyorsa, eninde sonunda
+hatırlamaz — ve hata **sessizdir**: veri değişir, index sessizce ayrışır.
+`public.emit_outbox_event` arama indeksinin umursadığı her tabloya `FOR EACH ROW`
+bağlı, ve `TG_ARGV` generic bir fonksiyonun bilemeyeceği iki şeyi taşıyor:
+
+| | |
+|---|---|
+| `TG_ARGV[0]` | aggregate id'yi tutan sütun (`entity_id`, `id`, ya da ilişki tablosunun sol tarafı) |
+| `TG_ARGV[1]` | tenant düzlemi tablosu için `tenant_id`, paylaşılan kayıtta yok |
+
+`identifiers` ve `nomens` kendi `id`'lerini kullanıyor; ilişki tablolarının bileşik
+anahtarı var ve tek bir id'leri olmadığı için **sol taraflarını** bildiriyorlar
+(`work_expression` → `work_entity_id`).
+
+#### Payload yalnızca değişeni söyler
+
+`UPDATE`'te `payload.changed`, gerçekten değişen sütunları taşıyor. Bunu yazarken
+`jsonb - jsonb` operatörünün **var olmadığı** ortaya çıktı; eski *anahtarları*
+çıkarmak ise değişmeyenleri de düşürüp değişikliği olduğundan büyük gösterirdi. Bu
+yüzden karşılaştırma açıkça yazıldı.
+
+Fark önemli: satırın *değiştiğini* bilen bir tüketici onu yeniden okumak zorunda;
+*neyin* değiştiğini bilen ise okuyup okumayacağına karar verebilir.
+
+#### Kapsam, ve kararın kendisi
+
+**24 tablo** izleniyor. Bir tablonun ya tetikleyicisi ya da adı konmuş bir gerekçesi
+olmak zorunda; `run_scale_checks.py` bunu sınıyor ve karar verilmemiş tabloyu
+listeliyor. Amaç listenin kusursuzluğu değil — bu bir yargı — **yeni bir tablonun
+bir karar vermeye zorlaması**. O olmadan yeni bir bibliyografik tablo outbox'a
+hiç girmezdi ve belirti, arama indeksinin bir tür kaydı sessizce kaçırması olurdu.
+
+15 muaf tablo var; en dikkat çekici ikisi: `entities` (kayıt defteri — olayları alt
+türleri taşır) ve `change_proposals` (bir istek, kaydın kendisi değil; uygulanması
+zaten kapsanıyor).
+
+#### İki sapma, ikisi de yazılı
+
+1. **§9.2'nin DDL'i `default uuid7()` diyor.** PostgreSQL 16'da `uuid7()` yok ve
+   D4'ün uygulaması Python'da — aynı kararın ikinci bir dildeki kopyası sürüklenmeye
+   açık olurdu. Sütun `gen_random_uuid()` alıyor ve sıra `occurred_at`'te taşınıyor.
+   Gerçek bir kayıp değil: tüketici satırın **güncel halini** yeniden okuyor, yani
+   aynı aggregate hakkındaki iki olayın hangi sırayla geldiği cevabı değiştirmiyor.
+   Sıra gerçekten önemli olursa doğru yol bir sequence sütunudur, id'nin şekli değil.
+
+2. **Sunucu varsayılanları modelde tekrarlanmadı.** Sütunların PostgreSQL'de
+   varsayılanı var (`gen_random_uuid()`, `now()`, `'{}'::jsonb`) çünkü tetikleyici
+   onları adlandırmadan yazıyor. Modelde tekrarlamak, SQLite test motorunun
+   çalıştırdığı DDL'e `DEFAULT (gen_random_uuid())` ve `DEFAULT '{}'::jsonb` koyardı
+   ve motor **ikisini de reddediyor** — tüm test paketi `CREATE TABLE`'da düştü.
+   Alembic `compare_server_default` ayarlı olmadıkça varsayılanları karşılaştırmıyor,
+   o yüzden modelde bulunmamaları hiçbir şeye mal olmuyor.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **123/123** (SQLite tabloyu kurabiliyor) |
+| Senaryo kontrolleri | **35/35** (3 yeni outbox kontrolü) |
+| `alembic check` | temiz, tek head `b8d4f0a25e37` |
+| Aynı işlem | işlem içinde olay görüldü, geri alındıktan sonra **0** kaldı |
+| `UPDATE` payload'ı | yalnızca `['canonical_title']` |
+| Kapsam | 24 tablo izleniyor, 15 muaf, kararsız yok |
+| API'den eser yaratma | `works INSERT` olayı yazıldı |
+| Kontroller iki kez | iz bırakmıyor: olay sayısı **0** |
+| Veri | `eser=16 entity=79 holding=16 nusha=12 kurum=5` — değişmedi |
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman

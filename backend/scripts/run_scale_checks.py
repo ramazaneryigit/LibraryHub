@@ -18,6 +18,7 @@ Usage
     docker compose exec -T api sh -c "cd /app/scripts && python run_scale_checks.py"
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -806,6 +807,217 @@ def check_subtype_insert_order(engine) -> None:
                     text("delete from entities where id = any(:ids)"),
                     {"ids": written},
                 )
+                # Last, and deliberately: the deletes above fire the outbox
+                # triggers, so the events this check produces -- and the DELETE
+                # events its own cleanup produces -- are only all present once
+                # the rows are gone. The outbox is a log, and a check that writes
+                # should not leave the table looking busier than the data.
+                connection.execute(
+                    text(
+                        "delete from public.outbox_events "
+                        "where aggregate_id = any(:ids)"
+                    ),
+                    {"ids": written},
+                )
+
+
+class _RollbackHere(Exception):
+    """Raised to force a savepoint to roll back, and caught immediately."""
+
+
+# Every table in `public` and `tenant` must either carry an outbox trigger or be
+# named here with a reason. The point is not that this list is perfect -- it is a
+# judgement -- but that adding a table forces somebody to make one. Without that,
+# a new bibliographic table would simply never appear in the outbox, and the
+# symptom would be a search index that is quietly missing a whole kind of record.
+EXCUSED_FROM_OUTBOX = {
+    "alembic_version": "migration bookkeeping",
+    "outbox_events": "the table itself",
+    "entities": "the registry; its subtypes carry the events",
+    "source_systems": "ingestion input, not the catalogue",
+    "source_records": "ingestion input, not the catalogue",
+    "ingestion_batches": "ingestion input, not the catalogue",
+    "reconciliation_candidates": "review queue; the writes it causes are covered",
+    "reconciliation_decisions": "review queue; the writes it causes are covered",
+    "source_classifications": "classification workflow, not the record",
+    "classification_mappings": "classification workflow, not the record",
+    "classification_validations": "classification workflow, not the record",
+    "relation_predicates": "relation vocabulary, not relations",
+    "relation_predicate_constraints": "relation vocabulary, not relations",
+    "change_proposals": "a request, not the record; applying it is covered",
+    "locations": "a shelf address, not something a reader searches for",
+}
+
+
+def check_outbox_same_transaction(owner) -> None:
+    """An event and the change it describes commit or roll back together.
+
+    This is the entire reason the table exists. An indexer may be behind, wrong
+    or absent -- it can always be rebuilt from PostgreSQL. What it must never be
+    is *inconsistent*: a change with no event is a row the index will never learn
+    about, and no amount of retrying finds it. Writing the event in the same
+    transaction is what rules that out, and the only way to show it is to roll a
+    transaction back and look.
+    """
+
+    from app.core.ids import uuid7
+
+    marker = uuid7()
+    seen = None
+
+    try:
+        with owner.begin_nested():
+            owner.execute(
+                text(
+                    "insert into public.entities "
+                    "(id, entity_type, created_at, updated_at) "
+                    "values (:id, 'WORK', now(), now())"
+                ),
+                {"id": marker},
+            )
+            owner.execute(
+                text(
+                    "insert into public.works "
+                    "(entity_id, canonical_title, normalized_title, created_at) "
+                    "values (:id, 'Outbox Sinamasi', 'outbox sinamasi', now())"
+                ),
+                {"id": marker},
+            )
+
+            seen = owner.execute(
+                text(
+                    "select count(*) from public.outbox_events "
+                    "where aggregate_id = :id and event_type = 'INSERT'"
+                ),
+                {"id": marker},
+            ).scalar()
+
+            raise _RollbackHere
+
+    except _RollbackHere:
+        pass
+
+    left = owner.execute(
+        text("select count(*) from public.outbox_events where aggregate_id = :id"),
+        {"id": marker},
+    ).scalar()
+
+    record(
+        "Outbox: olay degisiklikle ayni islemde yaziliyor",
+        seen == 1 and left == 0,
+        f"islem icinde gorulen={seen}, geri alindiktan sonra kalan={left}",
+    )
+
+
+def check_outbox_reports_what_moved(owner) -> None:
+    """An UPDATE says which columns changed, and only those.
+
+    A consumer that only knows *that* a row changed has to re-read it. One that
+    knows what moved can decide whether it needs to, which is the difference
+    between an indexer that scales and one that rewrites every document on every
+    touch.
+    """
+
+    from app.core.ids import uuid7
+
+    marker = uuid7()
+    changed = None
+
+    try:
+        with owner.begin_nested():
+            owner.execute(
+                text(
+                    "insert into public.entities "
+                    "(id, entity_type, created_at, updated_at) "
+                    "values (:id, 'WORK', now(), now())"
+                ),
+                {"id": marker},
+            )
+            owner.execute(
+                text(
+                    "insert into public.works "
+                    "(entity_id, canonical_title, normalized_title, "
+                    " original_language, created_at) "
+                    "values (:id, 'Ilk', 'ilk', 'tr', now())"
+                ),
+                {"id": marker},
+            )
+            owner.execute(
+                text(
+                    "update public.works set canonical_title = 'Ikinci' "
+                    "where entity_id = :id"
+                ),
+                {"id": marker},
+            )
+
+            changed = owner.execute(
+                text(
+                    "select payload -> 'changed' from public.outbox_events "
+                    "where aggregate_id = :id and event_type = 'UPDATE' "
+                    "order by occurred_at desc limit 1"
+                ),
+                {"id": marker},
+            ).scalar()
+
+            raise _RollbackHere
+
+    except _RollbackHere:
+        pass
+
+    # PSQL returns jsonb as text; both shapes are accepted so the check does not
+    # depend on the driver.
+    if isinstance(changed, str):
+        changed = json.loads(changed)
+
+    keys = sorted((changed or {}).keys())
+
+    record(
+        "Outbox: UPDATE yalnizca degisen sutunu bildiriyor",
+        keys == ["canonical_title"],
+        f"bildirilen sutunlar: {keys}",
+    )
+
+
+def check_outbox_coverage(owner) -> None:
+    """Every table is either watched or explicitly excused."""
+
+    rows = owner.execute(
+        text(
+            "select n.nspname || '.' || c.relname "
+            "from pg_class c join pg_namespace n on n.oid = c.relnamespace "
+            "where c.relkind = 'r' and n.nspname in ('public', 'tenant') "
+            "order by 1"
+        )
+    ).scalars().all()
+
+    watched = set(
+        owner.execute(
+            text(
+                "select c.relname from pg_trigger t "
+                "join pg_class c on c.oid = t.tgrelid "
+                "where not t.tgisinternal and t.tgname like 'trg_%_outbox'"
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    undecided = sorted(
+        name
+        for name in rows
+        if name.split(".", 1)[1] not in watched
+        and name.split(".", 1)[1] not in EXCUSED_FROM_OUTBOX
+    )
+
+    record(
+        "Outbox: her tablo izleniyor ya da gerekcesiyle muaf",
+        not undecided,
+        (
+            f"{len(watched)} tablo izleniyor, {len(EXCUSED_FROM_OUTBOX)} muaf"
+            if not undecided
+            else "karar verilmemis: " + ", ".join(undecided)
+        ),
+    )
 
 
 def check_app_imports_resolve() -> None:
@@ -900,6 +1112,11 @@ def main() -> int:
 
         print("\n-- kaynak tutarliligi --")
         check_app_imports_resolve()
+
+        print("\n-- outbox --")
+        check_outbox_same_transaction(owner)
+        check_outbox_reports_what_moved(owner)
+        check_outbox_coverage(owner)
 
         print("\n-- Asama 6 dogrulamasi --")
         check_legacy_item_surface()
