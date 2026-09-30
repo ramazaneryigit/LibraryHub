@@ -1539,6 +1539,102 @@ Yazma yolu SQLite'tan erişilemezdi ve bu üç ayrı sebeple ortaya çıktı:
 
 ---
 
+### 0.22 Kullanıcı ve kurum yönetimi — TAMAMLANDI
+
+#### Önce ölçtüm, sonra tasarladım
+
+`create_user.py`'nin başlığı şunu iddia ediyordu: *"`control.users`'ı yalnızca şema
+sahibi yazabilir; uygulama rolünün orada `SELECT`'i var, başka bir şeyi yok."*
+
+**Bu doğru değildi.** Ölçüm:
+
+```
+libraryhub_global_app | control.users     | INSERT,SELECT,UPDATE
+libraryhub_global_app | control.sessions  | INSERT,SELECT,UPDATE
+libraryhub_global_app | control.tenants   | SELECT
+```
+
+Yani sınır grant değil, **kalkan tetikleyicisi**. Yanlış bir güvenlik iddiası hiç
+yorum olmamasından kötüdür: onu okuyan kişi `control.users`'a yazan bir yol
+eklemenin zaten imkânsız olduğunu sanır. Düzeltildi.
+
+#### Ve bu ölçüm gerçek bir açık buldu
+
+`users_guard_self_registration` **yalnızca `BEFORE INSERT`** tanımlıydı. Kalkanın
+kendisi doğruydu ama iki yoldan birini kapatıyordu. Bir `UPDATE`:
+
+* var olan bir hesabı `role = 'admin'` yapabilirdi — INSERT kalkanının engellediği
+  yükseltmenin ta kendisi, bir ifade sonra;
+* bir yöneticinin `password_hash`'ini değiştirebilirdi — `role`'a hiç dokunmadan
+  hesap devralma.
+
+Bugün ikisini de yapan bir kod yok, çünkü bu tabloyu uygulama üzerinden güncelleyen
+bir yol yoktu. **Personel yönetimini API'ye eklemek tam da onu erişilebilir kılacak
+değişiklikti**, o yüzden önce kapatıldı.
+
+Yeni kalkan `BEFORE INSERT OR UPDATE` ve iki yönü de kapsıyor: `new.role = 'admin'`
+yükseltmeyi ve bir yönetici satırına yapılan *her* düzenlemeyi, `old.role = 'admin'`
+ise indirmeyi reddeder. `email_verified_at` kuralı **bilerek INSERT'te kaldı**:
+adres doğrulamak bir UPDATE'tir ve `/auth/verify-email`'in meşru işi odur; kuralı
+genişletmek koruduğu tek akışı kırardı.
+
+Fonksiyonun adı `guard_self_registration` → `guard_application_account_writes`
+oldu. Artık kaydı değil, bir uygulama rolünün hesaplara yapabileceğini sınırlıyor;
+aksiğini söyleyen bir ad, sıradaki kişinin UPDATE yolunu korumasız sanmasının
+tam sebebi.
+
+**Kalıcı kanıt:** `run_scale_checks.py` iki yükseltmeyi gerçek veritabanında
+deniyor ve ikisinin de reddedildiğini doğruluyor.
+
+#### Uçlar
+
+`/api/v1/admin` altında on bir uç: kurum listesi/tek kurum, hesap listesi/tek hesap,
+hesap açma, güncelleme, parola sıfırlama, oturum iptali.
+
+**Hesap uçları `get_db` kullanıyor, `owner_db` değil — ve bu tercih burada kritik.**
+`owner_db` bir süper kullanıcı; hesapları onunla yazmak
+`guard_application_account_writes`'ı devre dışı bırakırdı, yani kalkanı kaldırırdı.
+Sıradan oturum, kalkanın ayakta kalmasını sağlayan şey.
+
+**Kurumlar yalnızca okunuyor.** Uygulama rolünün `control.tenants` üzerinde
+`SELECT`'i var, `INSERT`'i yok. Bu bir eksiklik değil: `control.tenants` RLS'in her
+kiracı sorgusunu bağladığı tablo ve bir uygulama oturumunun orada kurum açmasına
+izin vermek, içindeki insanları yönetmesine izin vermekten ayrı bir karardır.
+
+#### Panelin yapamadıkları, ve neden
+
+| Yapamaz | Sebep |
+|---|---|
+| Yönetici açmak | Kalkan reddediyor; `create_user.py` (sahip) yapar |
+| Var olan yöneticiyi değiştirmek | Aynı kalkan, iki yön |
+| Hesabı doğrulanmış açmak | Kalkan reddediyor — adresi sahibi onaylar |
+| Kurum açmak | `control.tenants` üzerinde yalnızca `SELECT` |
+
+Bunlar eksik liste değil, **kalkanın tanımı**. Panel, yerini aldığı konsoldan
+bilerek daha az yetkili.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **123/123** (17 yeni) |
+| Senaryo kontrolleri | **31/31** (2 yeni yükseltme kontrolü) |
+| `alembic check` | temiz, tek head `a7c3e9f14d26` |
+| Uygulama rolü ile `role='admin'` yapma | trigger reddetti |
+| Uygulama rolü ile yönetici parolası değiştirme | trigger reddetti |
+| Yönetici: kurum/hesap listesi | 105 kurum, 4 hesap, platform hesabı `(platform)` |
+| Hesap açma | 201, **doğrulanmamış**, `account_kind` alan adından türetildi |
+| Doğrulanmamış hesapla giriş | 403, açıklayıcı mesajla |
+| Aynı e-posta | 409 |
+| `role='admin'` isteme | 422 (doğrulama, veritabanına varmadan) |
+| Yönetici hesabını değiştirme | 403 |
+| Hesabı kapatma | canlı oturumlar da iptal edildi |
+| Parola sıfırlama | eski oturumlar iptal edildi |
+| Kütüphaneci / oturumsuz | 403 / 401 |
+| Veri | `works=316 entities=479 items=849 control.users=4` — değişmedi |
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman

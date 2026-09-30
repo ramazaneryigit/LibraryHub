@@ -394,8 +394,11 @@ class User(Base):
     )
 
     # NULL means the address has never been shown to receive mail, and such an
-    # account cannot log in. An administrator-created account is verified by
-    # construction and gets this set at creation.
+    # account cannot log in. `create_user.py`, which runs with the owner
+    # credential, may set this at creation. The panel may not:
+    # `guard_application_account_writes` refuses an application role an account
+    # that is already verified, so one opened over the API is confirmed by its
+    # holder. See docs/architecture-v2.md §0.22.
     email_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

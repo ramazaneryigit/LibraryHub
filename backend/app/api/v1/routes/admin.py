@@ -23,8 +23,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ...deps import current_user, owner_db, require_admin
+from ....db import get_db
 from ....db.models import User
-from ....schemas.admin import ProposalDecision
+from ....schemas.admin import PasswordReset, ProposalDecision, UserCreate, UserUpdate
 from ....services.proposal_review import (
     STATUSES,
     apply_proposal,
@@ -32,6 +33,18 @@ from ....services.proposal_review import (
     list_proposals,
     load_proposal,
     record_decision,
+)
+from ....services.staff_directory import (
+    AccountRefused,
+    ROLES,
+    create_user,
+    get_tenant,
+    get_user,
+    list_tenants,
+    list_users,
+    revoke_sessions,
+    set_password,
+    update_user,
 )
 
 
@@ -267,3 +280,229 @@ def apply(
         "dropped": result.dropped,
         "proposal": _proposal_view(load_proposal(db, proposal_id)),
     }
+
+
+# --------------------------------------------------------------------- views
+
+
+def _tenant_view(row) -> dict:
+    return {
+        "id": str(row["id"]),
+        "slug": row["slug"],
+        "display_name": row["display_name"],
+        "staff_count": row["staff_count"],
+        "created_at": _stamp(row["created_at"]),
+    }
+
+
+def _user_view(row) -> dict:
+    return {
+        "id": str(row["id"]),
+        "tenant_id": str(row["tenant_id"]) if row["tenant_id"] else None,
+        "tenant_name": row["tenant_name"],
+        "tenant_slug": row["tenant_slug"],
+        "email": row["email"],
+        "display_name": row["display_name"],
+        "role": row["role"],
+        "account_kind": row["account_kind"],
+        "email_verified_at": _stamp(row["email_verified_at"]),
+        "is_active": row["is_active"],
+        "created_at": _stamp(row["created_at"]),
+        "updated_at": _stamp(row["updated_at"]),
+    }
+
+
+# -------------------------------------------------------------- institutions
+#
+# These read `control.tenants` through the ordinary application session, not the
+# owner credential. The application role has `SELECT` on that table and nothing
+# else, so institutions are read here and created by `register_domain.py`.
+
+
+@router.get("/tenants")
+def tenants(db: Session = Depends(get_db)):
+    rows = list_tenants(db)
+
+    return {
+        "count": len(rows),
+        "tenants": [_tenant_view(row) for row in rows],
+    }
+
+
+@router.get("/tenants/{tenant_id}")
+def tenant(tenant_id: uuid.UUID, db: Session = Depends(get_db)):
+    row = get_tenant(db, tenant_id)
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Kurum bulunamadı.",
+        )
+
+    return _tenant_view(row)
+
+
+# ------------------------------------------------------------------ accounts
+#
+# Through `get_db`, deliberately, and this is the one place where that choice is
+# load-bearing. `owner_db` is a superuser, so writing accounts through it would
+# bypass `guard_application_account_writes` -- the trigger that stops an
+# application role from promoting anybody to administrator or from rewriting an
+# administrator's password. The ordinary session is what keeps that true.
+
+
+@router.get("/users")
+def users(
+    tenant_id: uuid.UUID | None = None,
+    role: str | None = Query(default=None, description="admin, librarian, viewer"),
+    include_platform: bool = Query(
+        default=True,
+        description="Kiracısız platform hesaplarını da listele.",
+    ),
+    limit: int = Query(default=200, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    if role is not None and role not in ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bilinmeyen rol: '{role}'. Geçerli: {', '.join(ROLES)}",
+        )
+
+    rows = list_users(
+        db,
+        tenant_id=tenant_id,
+        role=role,
+        include_platform=include_platform,
+        limit=limit,
+    )
+
+    return {
+        "count": len(rows),
+        "accounts": [_user_view(row) for row in rows],
+    }
+
+
+@router.get("/users/{user_id}")
+def account(user_id: uuid.UUID, db: Session = Depends(get_db)):
+    row = get_user(db, user_id)
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Hesap bulunamadı.",
+        )
+
+    return _user_view(row)
+
+
+@router.post("/users", status_code=status.HTTP_201_CREATED)
+def open_account(payload: UserCreate, db: Session = Depends(get_db)):
+    """Open a staff account.
+
+    The account is **unverified**, and that is the guard trigger's doing rather
+    than an omission: an application role may not create an account that is
+    already verified, so the holder has to confirm the address. The owner-running
+    script may do both; this path deliberately has less authority.
+    """
+
+    try:
+        row = create_user(
+            db,
+            tenant_id=payload.tenant_id,
+            email=payload.email,
+            display_name=payload.display_name,
+            role=payload.role,
+            password=payload.password,
+        )
+
+        db.commit()
+
+    except AccountRefused as refusal:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=refusal.status_code,
+            detail=str(refusal),
+        )
+
+    return _user_view(row)
+
+
+@router.patch("/users/{user_id}")
+def change_account(
+    user_id: uuid.UUID,
+    payload: UserUpdate,
+    db: Session = Depends(get_db),
+):
+    """Change an ordinary account. Administrator accounts are refused.
+
+    Deactivating also ends every live session: an account switched off while its
+    session keeps working has not been switched off.
+    """
+
+    try:
+        row = update_user(
+            db,
+            user_id,
+            display_name=payload.display_name,
+            role=payload.role,
+            is_active=payload.is_active,
+        )
+
+        db.commit()
+
+    except AccountRefused as refusal:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=refusal.status_code,
+            detail=str(refusal),
+        )
+
+    return _user_view(row)
+
+
+@router.post("/users/{user_id}/password")
+def reset_password(
+    user_id: uuid.UUID,
+    payload: PasswordReset,
+    db: Session = Depends(get_db),
+):
+    """Set a new password, and end the sessions the old one opened."""
+
+    try:
+        result = set_password(db, user_id, payload.password)
+
+        db.commit()
+
+    except AccountRefused as refusal:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=refusal.status_code,
+            detail=str(refusal),
+        )
+
+    return {
+        "user": _user_view(result["user"]),
+        "revoked_sessions": result["revoked_sessions"],
+    }
+
+
+@router.post("/users/{user_id}/sessions/revoke")
+def revoke(user_id: uuid.UUID, db: Session = Depends(get_db)):
+    """End every live session for an account, without changing anything else."""
+
+    row = get_user(db, user_id)
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Hesap bulunamadı.",
+        )
+
+    revoked = revoke_sessions(db, user_id)
+
+    db.commit()
+
+    return {"user_id": str(user_id), "revoked_sessions": revoked}

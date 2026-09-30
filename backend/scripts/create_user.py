@@ -1,12 +1,20 @@
 """Create a staff account, or reset its password.
 
-Why this is not an API endpoint
--------------------------------
-Only the schema owner can write to `control.users`; the application role has
-`SELECT` on it and nothing else. Creating accounts is therefore an administrative
-act performed with the owner credential, not something a stolen application
-session can do. Giving the application `INSERT` on accounts "for an admin panel"
-would mean one compromised session can mint more sessions with any tenant.
+Why this still exists next to the panel
+---------------------------------------
+The application role **does** hold `INSERT, SELECT, UPDATE` on `control.users` --
+that is what lets `/api/v1/admin/users` manage staff at all -- so the boundary is
+not the grant. It is the guard trigger, which refuses an application role any
+administrator account and any account that is already verified.
+
+Two things are therefore out of the panel's reach, and both are here:
+
+* creating or changing an **administrator**, the account that can write the
+  shared plane;
+* marking an address **verified**, which is the panel's deliberate shortfall: an
+  account it opens is confirmed by its holder.
+
+Run with the owner credential, which the trigger exempts.
 
 Usage
 -----
@@ -33,6 +41,9 @@ at all (docs/architecture-v2.md §0.20).
     ... python create_user.py --platform \\
         --email platform@libraryhub.local \\
         --name 'Platform Yoneticisi'
+
+See also `docs/architecture-v2.md` §0.21 and §0.22: the curation endpoints, and
+what the panel may do to accounts.
 """
 
 import argparse

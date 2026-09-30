@@ -362,6 +362,65 @@ def check_tenant_role_jail(app) -> None:
             )
 
 
+def check_account_guard(app) -> None:
+    """An application role cannot promote an account to administrator.
+
+    The grant is real: `libraryhub_global_app` holds `INSERT, SELECT, UPDATE` on
+    `control.users`, because the panel has to manage staff. So the guard trigger
+    is the boundary, not the permission -- and it was declared `BEFORE INSERT`
+    only, which left the same escalation one UPDATE away, plus the ability to
+    rewrite an administrator's password without ever touching `role`.
+
+    Both are attempted here. Neither has to be reachable from a route for this to
+    matter: a write path that could reach `control.users` was enough, and the
+    panel is that write path.
+    """
+
+    target = app.execute(
+        text(
+            "select id from control.users where role <> 'admin' "
+            "order by email limit 1"
+        )
+    ).scalar()
+
+    if target is None:
+        record(
+            "Uygulama rolu hesabi admin yapamaz",
+            False,
+            "sinanacak yonetici olmayan hesap yok",
+        )
+        return
+
+    attempts = (
+        (
+            "Uygulama rolu hesabi admin yapamaz",
+            "update control.users set role = 'admin' where id = :id",
+        ),
+        (
+            "Uygulama rolu yoneticinin parolasini degistiremez",
+            "update control.users set password_hash = 'x' "
+            "where id = (select id from control.users "
+            "            where role = 'admin' order by email limit 1)",
+        ),
+    )
+
+    for label, sql in attempts:
+        detail = ""
+
+        try:
+            with app.begin_nested():
+                app.execute(text(sql), {"id": target})
+
+            blocked = False
+            detail = "IZIN VERILDI"
+
+        except Exception as exc:
+            blocked = True
+            detail = str(exc).strip().splitlines()[0][:90]
+
+        record(label, blocked, detail)
+
+
 def check_legacy_retirement(owner) -> None:
     """The legacy item plane is gone, not merely unused.
 
@@ -752,7 +811,7 @@ def main() -> int:
     print("Ölçek senaryo kontrolleri\n")
 
     with owner_engine.connect() as owner, app_engine.connect() as app:
-        print("-- yalitkanlik --")
+        print("\n-- yalitkanlik --")
         check_rls_isolation(owner, app)
         check_rls_fail_closed(app)
 
@@ -770,6 +829,7 @@ def main() -> int:
         print("\n-- yazma siniri --")
         check_tenant_role_jail(app)
         check_branch_guard(owner, app)
+        check_account_guard(app)
 
         print("\n-- yazma yolu --")
         check_subtype_insert_order(owner_engine)
