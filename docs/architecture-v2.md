@@ -1247,6 +1247,130 @@ Geri dönüş yolu: `_legacy_items_backup.sql` (üç tablonun `pg_dump --data-on
 
 ---
 
+### 0.19 Aşama 5'in kalanı ve yapısal yeniden düzenleme — TAMAMLANDI
+
+#### `/api/v1`
+
+Önek **mount'ta**, router'ın kendisinde değil. Bu tercih işin tamamını mümkün kılıyor:
+aynı router hem `/api/v1` altına hem **eski yollara** bağlanıyor ve ikinci bağlamada
+`/api/v1` taşımıyor. Şema artık **52 sürümlü yol ve sıfır sürümsüz** yol gösteriyor.
+
+Eski yollar **yönlendirme değil, ikinci bağlama**: bir yönlendirme, takip etmeyen
+istemciler için `POST`'un ne yaptığını sessizce değiştirirdi ve istemcilerin çoğu takip
+etmez. Tek router iki yola bağlanınca da iki yol birbirinden ayrışamaz.
+
+#### Global yazma uçları korundu — iki kademe
+
+Öncesinde paylaşılan plane'e **her yazma açıktı**: API'ye erişebilen herkes bir Work,
+Person veya Concept yaratabilir, iki kimliği birleştirebilir, reconciliation kararı
+verebilir, toplu veri yükleyebilirdi. Okumalar kasıtlı olarak açık kalıyor — platformun
+varlık sebebi o — ama yazmak hiçbir şey istemiyordu.
+
+Ayrım keyfi değil:
+
+* **Yaratma** (henüz kataloglanmamış bir eser, bir kişi, bir kavram) olağan katalog işi —
+  **personel** yeter.
+* **Kimlik değiştiren** işlemler (kişi birleştirme, reconciliation kararı, eşleme silme,
+  toplu yükleme) sonradan bir satır düzenlenerek **geri alınamaz** — **yönetici** gerekir.
+
+24 uç korundu (19 personel + 5 yönetici). `auth` ve `tenant` uçlarına dokunulmadı: onların
+kendi modeli var ve kiracı oturumu zaten global plane'e yazamaz.
+
+Reconciliation testleri bu uçları **oturumsuz** çağırıyordu ve artık haklı olarak 401 aldı.
+Bağımlılığı override etmek yerine **gerçekten kimlik doğruluyorlar**, böylece yetki yolu
+atlanmıyor, sınanıyor.
+
+#### Yapı
+
+| Önce | Sonra |
+|---|---|
+| `models.py` **1379 satır**, her alan bir arada | `db/models/` altında **9 modül** (68–392 satır) |
+| `db.py` motor + oturum + kiracı kapsamı karışık | `db/base.py` + `db/session.py` |
+| `ids.py`, `auth.py`, `normalization.py` kökte | `core/` — hiçbir şeye bağlı olmayan yapraklar |
+| `routers/` düz dizin | `api/v1/routes/` + `api/deps.py` + `api/v1/__init__.py` |
+| 30 Pydantic modeli 16 router'ın içinde | `schemas/`, kaynak başına bir modül |
+| `os.environ` dağınık | `core/config.py` |
+
+**`core/` yapraktır**: `app.db`'den veya `app.api`'den hiçbir şey import etmez. Bu onu
+her yerden import edilebilir kılar — bir döngünün ölümcül olacağı model modüllerinin
+içinden bile.
+
+Modeller **elle yeniden yazılmadı**: kaynak satır aralıklarını kesen bir script yazıldı,
+böylece her sınıf gövdesi bit bit aynı kaldı. 1379 satırlık bildirimsel gövdeyi yeniden
+yazmak, bir sütunun sessizce tip değiştirmesinin en kolay yoludur.
+
+#### Bu sırada bulunan gerçek hata: alt tür yazma sırası
+
+Bölmeden sonra **her global kayıt oluşturma çöktü** — Work, Person, Concept, Expression,
+Manifestation, Place, TimeSpan, CollectiveAgent, ClassificationNode; hepsi `entities`'e
+foreign key ihlaliyle.
+
+**Kök neden:** SQLAlchemy, aralarında `relationship()` olmayan mapper'ları **isim sırasına**
+göre flush ediyor; isim de modül-yol + sınıf adıdır. Bütün modeller tek dosyadayken bu
+kaza `app.models.Entity`'yi `app.models.Work`'tan önce sıralıyordu ve sıra **şans eseri**
+doğruydu. Modüllere bölününce adlar `app.db.models.bibliographic.Work` ve
+`app.db.models.identity.Entity` oldu, sıralama ters döndü, alt tür satırı önce yazıldı ve
+kısıt reddetti.
+
+**Sıra hiç garanti edilmemişti; sadece öyle görünüyordu.**
+
+**İşe yaramayan deneme:** import sırasını `identity` öne gelecek şekilde değiştirdim.
+Düzeltmedi — çünkü sıralamayı belirleyen import sırası değil, modül-yol adı. Bunu
+belgeye yazıyorum çünkü yanlış bir açıklamayı `db/models/__init__.py` yorumunda
+bırakmak, hiç yorum bırakmamaktan kötüdür.
+
+**Gerçek düzeltme:** bağımlılığı **açıkça bildirmek**. `Entity` dokuz alt tür ilişkisini
+tanımlıyor, `lazy="raise"` ile — kimse onları gezmiyor, var olma sebepleri unit of work'ün
+entity'yi önce yazması gerektiğini bilmesi; `lazy="raise"` de kimsenin farkında olmadan
+N+1 ödemesini engelliyor. Ayrıca alt tür kontrolleri `BEFORE INSERT`'tan **ertelenebilir
+kısıt tetikleyicisine** taşındı, çünkü entity ile alt türü tek işlemde yazılıyor ve kural
+işlem hakkında bir ifade.
+
+**Neden test değil kontrol:** kısıt PostgreSQL'in. SQLite'ta sıralama gözlemlenemez, yani
+test paketi bu hatayı **göremez**. `run_scale_checks.py` artık PostgreSQL'de gerçek bir
+Work+Person yazıyor — bu hata sınıfı için tripwire.
+
+#### Şema katmanı ve iki hatası
+
+30 model, kaynak başına bir modül. İki hata çıktı ve ikisini de **testler** buldu,
+okuyarak değil:
+
+1. **Çok satırlı import'un ortasına ekleme.** Yeni import'u "`from ` ile başlayan son
+   satırdan sonra" koymak, parantezli bir import bloğunu ikiye bölüyor. Doğrusu AST'den
+   son import *deyiminin* bittiği satır.
+2. **`uuid.UUID` modül ister, sınıf değil.** Model `uuid.UUID` kullanıyordu; eşlemem
+   yalnızca `UUID` adını biliyordu. `from __future__ import annotations` yürürlükteyken
+   Pydantic bunu ancak şema kurulurken fark ediyor — "not fully defined" — ve
+   `/openapi.json`'ı da beraberinde düşürüyor.
+
+Script artık **hesabına katamadığı her adı raporluyor**, böylece bir sonraki bilmediği
+import'u sessizce düşürmek yerine söylüyor.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **88/88** |
+| Senaryo kontrolleri | **28/28** |
+| `alembic check` | temiz (`d2e5f04bc159`) |
+| `/api/v1/*` ve eski yollar | ikisi de 200 |
+| `/openapi.json` | 200, 52 sürümlü yol, 0 sürümsüz |
+| Tokensiz global yazma | 401 |
+| Personel ile kimlik birleştirme | 403 |
+| Personel ile Work yaratma | 201 |
+| Alt tür yazma (PostgreSQL) | Work + Person tek işlemde |
+
+#### Kalanlar
+
+1. **`services/` katmanı hâlâ iş mantığıyla SQL'i karıştırıyor.** Yapısal işin son parçası:
+   sorguları repository'lere, kuralları servislere ayırmak. En büyüğü
+   `classifications.py` (1254 satır) ve `tenant.py` (722 satır).
+2. **Yönetici kimliği yok** — panel aşamasının işi. Bugün yönetici, `create_user.py` ile
+   açılmış `role='admin'` bir hesap.
+3. `nomens.normalized_value` (§14) ve Search Plane (§9) hâlâ açık.
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman
