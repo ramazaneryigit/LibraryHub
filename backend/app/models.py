@@ -1720,7 +1720,9 @@ class IngestionBatch(Base):
 # side effects only. See docs/architecture-v2.md §1.2.
 from .control_models import (  # noqa: E402,F401
     Branch,
+    EmailVerification,
     Organization,
+    OrganizationDomain,
     Tenant,
     TenantDatabase,
     User,

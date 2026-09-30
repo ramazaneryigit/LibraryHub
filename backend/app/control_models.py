@@ -317,6 +317,10 @@ class User(Base):
             "role IN ('admin', 'librarian', 'viewer')",
             name="ck_users_role",
         ),
+        CheckConstraint(
+            "account_kind IN ('institutional', 'corporate')",
+            name="ck_users_account_kind",
+        ),
         UniqueConstraint("email", name="uq_users_email"),
         Index("ix_users_tenant_id", "tenant_id"),
         {"schema": CONTROL_SCHEMA},
@@ -354,6 +358,24 @@ class User(Base):
         String(30),
         nullable=False,
         default="librarian",
+    )
+
+    # `institutional` (a university or library on an academic domain) or
+    # `corporate` (a publisher or other organization on a domain that had to be
+    # claimed and verified for it). Decided by `email_domains.classify_email`,
+    # never by the client. See docs/architecture-v2.md §0.14.
+    account_kind: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="institutional",
+    )
+
+    # NULL means the address has never been shown to receive mail, and such an
+    # account cannot log in. An administrator-created account is verified by
+    # construction and gets this set at creation.
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     is_active: Mapped[bool] = mapped_column(
@@ -428,4 +450,133 @@ class UserSession(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+
+
+class OrganizationDomain(Base):
+    """A corporate domain that has been claimed for an organization.
+
+    This is what makes "kurumsal mail adres doğrulaması" mean something. An
+    address on an academic domain proves affiliation by itself; an address on
+    `@yayinevi.com.tr` proves nothing, because anybody can register a domain.
+    The domain therefore has to be attached to an organization here -- by an
+    administrator, with the method recorded -- before an account on it is
+    accepted.
+
+    `verification_method` records *how* the claim was established (a DNS record,
+    a message to a role address, a signed letter), because "verified" without
+    the how is not auditable later.
+    """
+
+    __tablename__ = "organization_domains"
+
+    __table_args__ = (
+        UniqueConstraint("domain", name="uq_organization_domains_domain"),
+        Index(
+            "ix_organization_domains_organization_id",
+            "organization_id",
+        ),
+        {"schema": CONTROL_SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid7,
+    )
+
+    domain: Mapped[str] = mapped_column(
+        String(253),
+        nullable=False,
+    )
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            f"{CONTROL_SCHEMA}.organizations.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+
+    verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    verification_method: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+    )
+
+
+class EmailVerification(Base):
+    """A pending "prove you can receive at this address" challenge.
+
+    The account row is created immediately, already carrying its tenant and its
+    `account_kind`, but with `email_verified_at` NULL -- so it exists, and cannot
+    be logged into. Doing it this way means `uq_users_email` holds the address
+    from the first request, and verification is a single UPDATE rather than a
+    second insert that could fail after the token was already spent.
+
+    The raw token is never stored, exactly as with sessions. The API has no mail
+    sender yet, so the link is written to the application log -- the same thing
+    a development mailer does -- and `scripts/verify_email.py` can complete a
+    challenge from the console. See docs/architecture-v2.md §0.14.
+    """
+
+    __tablename__ = "email_verifications"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "token_hash",
+            name="uq_email_verifications_token_hash",
+        ),
+        Index("ix_email_verifications_user_id", "user_id"),
+        {"schema": CONTROL_SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid7,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            f"{CONTROL_SCHEMA}.users.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+
+    token_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
     )

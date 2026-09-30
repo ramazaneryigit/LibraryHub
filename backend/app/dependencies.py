@@ -22,7 +22,7 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import hash_session_token
+from .auth import as_utc, hash_session_token
 from .control_models import User, UserSession
 from .db import get_db, tenant_session
 
@@ -30,21 +30,6 @@ __all__ = ["current_session", "current_user", "require_role", "tenant_db"]
 
 
 _UNAUTHORIZED_HEADERS = {"WWW-Authenticate": "Bearer"}
-
-
-def _as_utc(value: datetime) -> datetime:
-    """Treat a naive timestamp as UTC.
-
-    PostgreSQL returns aware datetimes for `timestamptz`; SQLite does not, so a
-    comparison against `datetime.now(timezone.utc)` raises TypeError on the test
-    engine only. Normalising here keeps expiry correct on both instead of
-    hiding the difference behind a driver-specific assumption.
-    """
-
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-
-    return value
 
 
 def current_session(
@@ -93,7 +78,7 @@ def current_session(
             headers=_UNAUTHORIZED_HEADERS,
         )
 
-    if _as_utc(session.expires_at) <= datetime.now(timezone.utc):
+    if as_utc(session.expires_at) <= datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session has expired",

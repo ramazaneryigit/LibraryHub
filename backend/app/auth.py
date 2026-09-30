@@ -24,9 +24,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from datetime import datetime, timezone
 
 __all__ = [
     "SESSION_TTL_HOURS",
+    "VERIFICATION_TTL_HOURS",
+    "as_utc",
     "hash_password",
     "hash_session_token",
     "new_session_token",
@@ -43,6 +46,22 @@ _DKLEN = 32
 _SALT_BYTES = 16
 
 SESSION_TTL_HOURS = 12
+VERIFICATION_TTL_HOURS = 24
+
+
+def as_utc(value: datetime) -> datetime:
+    """Treat a naive timestamp as UTC.
+
+    PostgreSQL returns aware datetimes for `timestamptz`; SQLite does not, so a
+    comparison against `datetime.now(timezone.utc)` raises TypeError on the test
+    engine only. Normalising keeps expiry checks correct on both instead of
+    hiding the difference behind a driver-specific assumption.
+    """
+
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+
+    return value
 
 
 def hash_password(password: str) -> str:

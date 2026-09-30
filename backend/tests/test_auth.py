@@ -16,6 +16,7 @@ tenant endpoint without a valid session.
 import os
 import unittest
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 
@@ -93,6 +94,9 @@ class AuthFlowTests(unittest.TestCase):
             display_name='Test Kullanıcı',
             password_hash=hash_password('parola-123'),
             role='librarian',
+            # Verified, because an unverified account cannot log in at all --
+            # that is asserted on its own in test_registration.py.
+            email_verified_at=datetime.now(timezone.utc),
         )
         self.db.add(self.user)
         self.db.commit()
