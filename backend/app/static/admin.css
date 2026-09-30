@@ -529,6 +529,65 @@ table.changes td.now {
     border-color: #f3c9c6;
 }
 
+/* ------------------------------------------------------- özet kartları */
+
+/* Kurumun kendi çalışma alanı bunlarla açılıyor: bir kütüphaneci giriş
+   yaptığında ilk görmek istediği şey kendi kütüphanesinin sayıları. */
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.summary-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 18px 20px;
+    box-shadow: var(--shadow-xs);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.summary-card:hover {
+    border-color: var(--primary-400);
+    box-shadow: var(--shadow-sm);
+}
+
+.summary-value {
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--primary-800);
+}
+
+.summary-label {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-subtle);
+    margin-top: 5px;
+}
+
+/* Katalogdan baskı seçimi */
+.catalog-pick {
+    padding: 7px 10px;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    max-width: 340px;
+}
+
+.catalog-pick:focus {
+    outline: none;
+    border-color: var(--primary-400);
+    box-shadow: var(--ring);
+}
+
 /* -------------------------------------------------------------- responsive */
 
 @media (max-width: 860px) {

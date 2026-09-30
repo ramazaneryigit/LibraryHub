@@ -71,6 +71,11 @@ def create_app() -> FastAPI:
     def admin_panel():
         return FileResponse("app/static/admin.html")
 
+    # A library's own workspace: what an institution sees when its staff sign in.
+    @application.get("/kutuphane", include_in_schema=False)
+    def library_workspace():
+        return FileResponse("app/static/kutuphane.html")
+
     return application
 
 

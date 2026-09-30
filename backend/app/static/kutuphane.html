@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LibraryHub · Kütüphanem</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/admin.css">
+</head>
+
+<body class="admin">
+
+<header class="topbar">
+    <div class="brand">
+        <div class="logo">LH</div>
+
+        <div>
+            <h1 id="library-name">Kütüphanem</h1>
+            <p id="library-sub">Kurumunuzun kütüphane otomasyonu</p>
+        </div>
+
+        <div id="session" class="session"></div>
+    </div>
+</header>
+
+<main class="admin-main">
+
+    <!-- ------------------------------------------------------ giriş -->
+    <section id="login-view" class="login-card" hidden>
+        <h2>Kütüphane girişi</h2>
+
+        <p class="muted">
+            Kurumunuzun kütüphane personeli için. Giriş yaptığınızda yalnızca
+            kendi kütüphanenizin kayıtlarını görürsünüz — bu bir yetki ayarı
+            değil, veritabanı kuralıdır.
+        </p>
+
+        <form id="login-form" class="stack">
+            <label>
+                E-posta
+                <input id="login-email" type="email" required autocomplete="username">
+            </label>
+
+            <label>
+                Parola
+                <input id="login-password" type="password" required autocomplete="current-password">
+            </label>
+
+            <button type="submit" class="primary">Giriş</button>
+        </form>
+
+        <div id="login-status" class="status" hidden></div>
+
+        <p class="muted note">
+            Kamuya açık arama için <a href="/">ana sayfaya</a> dönün.
+        </p>
+    </section>
+
+    <!-- ------------------------------------------------------ çalışma alanı -->
+    <div id="workspace" hidden>
+
+        <nav class="tabs" id="tabs">
+            <button type="button" class="tab" data-view="panel">Panel</button>
+            <button type="button" class="tab" data-view="holdings">Holdingler</button>
+            <button type="button" class="tab" data-view="items">Nüshalar</button>
+            <button type="button" class="tab" data-view="proposals">Önerilerim</button>
+        </nav>
+
+        <div id="view-status" class="status" hidden></div>
+
+        <!-- ------------------------------------------------ panel -->
+        <section id="view-panel" class="view" hidden>
+            <div class="summary-grid" id="summary-grid"></div>
+
+            <div class="note">
+                <strong>Holding</strong>, kütüphanenizin bir baskıyı tuttuğu
+                beyandır. <strong>Nüsha</strong>, o holdinge ait tek bir fiziksel
+                kitaptır — rafta duran şey. Bir holdingin nüshası olmayabilir;
+                o zaman da katalogda görünür.
+            </div>
+        </section>
+
+        <!-- --------------------------------------------- holdingler -->
+        <section id="view-holdings" class="view" hidden>
+            <div class="toolbar">
+                <button type="button" id="holding-new" class="primary">
+                    Katalogdan holding ekle
+                </button>
+                <button type="button" id="holding-refresh">Yenile</button>
+                <span class="muted" id="holding-summary"></span>
+            </div>
+
+            <div id="holding-form" class="card" hidden>
+                <h3>Katalogdan bir baskı seçin</h3>
+
+                <p class="muted note">
+                    Holding, paylaşılan katalogdaki bir baskıya bağlanır. Önce
+                    eseri arayın, sonra kütüphanenizin tuttuğu baskıyı seçin.
+                </p>
+
+                <div class="row">
+                    <input id="catalog-query" placeholder="Eser, yazar, ISBN…"
+                           autocomplete="off" style="flex:1; min-width:220px;">
+                    <button type="button" id="catalog-search">Ara</button>
+                </div>
+
+                <div id="catalog-results" class="list" style="margin-top:12px;"></div>
+
+                <form id="holding-fields" class="stack" hidden>
+                    <p class="muted" id="holding-target"></p>
+
+                    <label>
+                        Şube
+                        <select id="holding-branch" required></select>
+                    </label>
+
+                    <label>
+                        Yerel kayıt anahtarı
+                        <input id="holding-key" required minlength="1"
+                               placeholder="Örn. KKU-2024-0001">
+                    </label>
+
+                    <label>
+                        Yer numarası
+                        <input id="holding-call" placeholder="Örn. PL248.D67">
+                    </label>
+
+                    <div class="row">
+                        <button type="submit" class="primary">Holdingi kaydet</button>
+                        <button type="button" id="holding-cancel">Vazgeç</button>
+                    </div>
+                </form>
+            </div>
+
+            <div id="holding-list" class="list"></div>
+        </section>
+
+        <!-- ----------------------------------------------- nüshalar -->
+        <section id="view-items" class="view" hidden>
+            <div class="toolbar">
+                <label>
+                    Holding
+                    <select id="item-holding-filter"><option value="">Hepsi</option></select>
+                </label>
+                <button type="button" id="item-new" class="primary">Yeni nüsha</button>
+                <button type="button" id="item-refresh">Yenile</button>
+                <span class="muted" id="item-summary"></span>
+            </div>
+
+            <form id="item-form" class="card stack" hidden>
+                <h3>Yeni nüsha</h3>
+
+                <label>
+                    Holding
+                    <select id="item-holding" required></select>
+                </label>
+
+                <label>
+                    Barkod
+                    <input id="item-barcode" maxlength="200" placeholder="Boş bırakılabilir">
+                </label>
+
+                <label>
+                    Raf / yer numarası
+                    <input id="item-shelfmark" maxlength="300">
+                </label>
+
+                <label>
+                    Durum
+                    <select id="item-availability">
+                        <option value="available">Rafta</option>
+                        <option value="on_loan">Ödünçte</option>
+                        <option value="reference">Danışma</option>
+                        <option value="lost">Kayıp</option>
+                        <option value="unknown">Bilinmiyor</option>
+                    </select>
+                </label>
+
+                <div class="row">
+                    <button type="submit" class="primary">Kaydet</button>
+                    <button type="button" id="item-cancel">Vazgeç</button>
+                </div>
+            </form>
+
+            <div id="item-list" class="list"></div>
+        </section>
+
+        <!-- ---------------------------------------------- öneriler -->
+        <section id="view-proposals" class="view" hidden>
+            <div class="toolbar">
+                <button type="button" id="proposal-refresh">Yenile</button>
+                <span class="muted" id="proposal-summary"></span>
+            </div>
+
+            <div class="note">
+                Paylaşılan katalog kaydında bir yanlış gördüğünüzde değiştiremezsiniz
+                — bu bir yetki değil, mimari: paylaşılan kayıt tek ve ortaktır.
+                <strong>Öneri</strong> açarsınız, platform yöneticisi değerlendirir.
+            </div>
+
+            <div id="proposal-detail" class="detail" hidden></div>
+            <div id="proposal-list" class="list"></div>
+        </section>
+
+    </div>
+
+</main>
+
+<footer>
+    LibraryHub · <a href="/">kamuya açık arama</a>
+</footer>
+
+<script src="/static/kutuphane.js"></script>
+
+</body>
+
+</html>

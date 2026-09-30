@@ -2302,6 +2302,75 @@ Bunun yerine **eşik ölçülüyor**: kontrol satır sayısını ve temsilî sor
 
 ---
 
+### 0.33 Kiracı çalışma alanı — `/kutuphane`
+
+#### Neden gerekliydi
+
+Aşama 0–6 bittiğinde platform **kamuya açık arama** ve **yönetici paneli**nden
+oluşuyordu. Yani: bir kütüphaneci giriş yaptığında göreceği bir yer **yoktu**, ve
+yeni bir kurum katılmak için operatörün sahip kimlik bilgisiyle iki script
+çalıştırmasını beklemek zorundaydı.
+
+Ölçüm: `tenant` şemasında 5 tablo var ve **okuyucu ya da ödünç tablosu yok**;
+kiracı uçlarının çoğu (holding/nüsha yazma) mevcut ama **görünür değil**.
+
+#### Ne yapıldı
+
+`/kutuphane` — kurumun kendi otomasyonu. Kütüphaneci giriş yapar ve **kendi
+kurumunun adını ve sayılarını** görür: holding, yayında, nüsha, rafta, ödünçte,
+şube, bekleyen öneri.
+
+| Sekme | Ne yapar |
+|---|---|
+| **Panel** | kurumun sayıları |
+| **Holdingler** | kendi holdingleri + **paylaşılan katalogdan holding ekleme** |
+| **Nüshalar** | kendi nüshaları, yeni nüsha, durum değiştirme |
+| **Önerilerim** | açtığı öneriler, geri çekme |
+
+**Katalogdan holding ekleme** akışın kalbi: kütüphaneci eseri arar, çıkan
+baskılardan kütüphanesinin tuttuğunu seçer, şube ve yerel kayıt anahtarıyla
+kaydeder. Kiracı düzlemi ile paylaşılan katalog arasındaki bağ böyle kurulur —
+ve bu bağ **manifestation** düzeyindedir, yani "hangi baskı" sorusu tam olarak
+cevaplanabilir kalır.
+
+#### Bu ekranda `tenant_id` yok
+
+Hangi kütüphane olduğu **oturumdan** gelir ve veritabanı politikası onu dayatır.
+İstemcinin söyleyebileceği bir şey olsaydı, söyleyebildiği şey yanlış olabilirdi.
+
+#### İki yeni uç
+
+`GET /tenant/me` ve `GET /tenant/summary`. İkincisindeki hiçbir sayı `WHERE tenant_id`
+ile süzülmüyor: `tenant_session` içinde çalışıyor, yani politika onları zaten
+kendi kütüphaneyle sınırlıyor. Ölçüldü — Kırıkkale 6 holding/6 nüsha, Hacettepe 2/2,
+ve kiracısız platform yöneticisi **403**.
+
+#### Ve bir hata
+
+`/tenant/me`'nin ilk hâli kurumu doğrudan `control.organizations`'tan okuyordu ve
+Kırıkkale için **"Canonical Redirect Test Organization B"** döndü: o tabloda RLS
+**yok** (ölçüldü) ve sorgu "ilk kurumu" alıyordu. Kurum artık kiracının **şubesinden**
+türetiliyor — `branches`'ta fail-closed politika var (§0.15) — ve her kütüphaneci
+kendi kurumunu görüyor.
+
+`control.organizations`'ın politika taşımaması bir sızıntı değil (kurum adları
+zaten kamuya açık) ama **kiracıya ait bir kurumu kiracı kimliğinden türetmenin
+doğru yolu `branches` üzerinden gitmektir.**
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **123/123** |
+| Senaryo kontrolleri | **41/41** |
+| `alembic check` | temiz, tek head `f3b8d1e64c72` |
+| `/kutuphane` | 200, gerçek tarayıcıda çizildi (panel, holdingler, nüshalar) |
+| Kiracı izolasyonu | Kırıkkale 6/6, Hacettepe 2/2 |
+| Kiracısız platform yöneticisi | tenant uçlarında **403** |
+| Kurum adı | her kütüphaneci kendi kurumunu görüyor |
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman
@@ -3521,34 +3590,59 @@ kanıtlandı.
 > `docker compose up -d` ile API yeniden başlatılır. Parola tek yerde (gitignore'lu `.env`)
 > durur; `docker-compose.yml` yalnızca değişken adı taşır.
 
-### Sıradaki: Aşama 5 — yazma yolu ve `/api/v1`
+### Sıradaki: kurumun kendi otomasyonu
 
-Aşama 4 veriyi taşıdı ve okuma yolunu `public.items_compat`'a çevirdi; **yazma yolu bilerek
-legacy tablolarda kaldı.** Aşama 5 onu taşır:
+**Aşama 0–6 tamamlandı** (§0.4–§0.31). Sistem `f3b8d1e64c72` head'inde, `alembic check`
+temiz, **123 birim testi** ve **41 senaryo kontrolü** yeşil, arama indeksten cevap veriyor.
 
-1. `POST /items` yalnızca `tenant.items` + `tenant.holdings`'e yazar,
-2. `POST /items/{id}/agents` yapısal hâle gelir (holding kurumu artık ilişki değil, aidiyet),
-3. `public.items_compat`'ın ikinci dalı boşalır ve görünüm tek dala iner,
-4. legacy tablolar deprecated işaretlenir (silme Aşama 6),
-5. `/api/v1` öneki eklenir, öneksiz yollar bir sürüm boyunca alias olarak korunur (§13).
+Ama bir kütüphaneci giriş yaptığında göreceği bir **yer yoktu**. Platform kamuya açık
+arama ve yönetici panelinden oluşuyordu; kurumun kendi kütüphane otomasyonu yoktu.
+Bu, "1000 kütüphaneli toplu katalog" hedefinin önündeki tek gerçek engeldi — çünkü
+yeni bir kurum bugün yalnızca operatörün sahip kimlik bilgisiyle çalıştırdığı iki
+script'le katılabiliyor.
 
-**Aşama 5'in önündeki tek gerçek engel: API'de tenant kimliği yok (OD10).**
-`POST /items` şu an hangi kuruma yazacağını bilemez; istekte tenant bilgisi taşınmıyor ve
-kimlik doğrulama yok. Bu çözülmeden yazma yolu taşınamaz — taşınırsa her yeni nüsha
-rastgele bir tenant'a düşer ya da hiç yazılamaz.
+#### Aşama A — Kiracı çalışma alanı — ✅ TAMAMLANDI (§0.33)
 
-Bu yüzden **Aşama 5'in ilk işi kimlik doğrulama ve tenant bağlamıdır** (OD10): en azından
-personel girişi + isteğin tenant'ını belirleyen bir mekanizma, ve her istekte
-`tenant_session()` kullanımı. Bu olmadan RLS'in `WITH CHECK` tarafı da zaten yazmayı
-reddeder — ki bu doğru davranıştır.
+`/kutuphane`: kütüphaneci giriş yapar, **kendi kurumunun adını ve sayılarını** görür,
+kendi holding ve nüshalarını yönetir, paylaşılan katalogdan holding ekler ve kendi
+önerilerini izler.
 
-**Kalan iş kalemleri:**
+#### Aşama B — Kendi kendine katılım
 
-1. `docs/reconciliation-policy.md` güncellenmeli — "33 isolated SQLite test pass" ifadesi
-   artık doğru ama testlerin SQLite vekili kullandığı ve `%` blocking'in PostgreSQL'e özel
+Bugün bir kurum katılmak için operatöre muhtaç. Tasarımın çekirdeği:
+**alan adı sahipliğinin kanıtı, kurumun kanıtıdır** — `@kku.edu.tr` adresini
+doğrulayabilen biri o kurumun temsilcisi olma iddiasını da kanıtlar
+(`control.organization_domains` ve `email_verifications` zaten var).
+
+Uygulama rolüne `control.tenants` üzerinde `INSERT` **verilmemeli**; bunun yerine
+kendi kontrolünü içinde yapan, tek yerde denetlenen bir `SECURITY DEFINER`
+`control.register_tenant(...)` fonksiyonu. Yetki yükseltmesi tek ve incelenebilir
+bir yerde kalır.
+
+#### Aşama C — Okuyucular ve dolaşım
+
+`tenant` şemasında **okuyucu ve ödünç tablosu yok** (ölçüldü). Koha benzeri bir
+otomasyonun çekirdeği bunlar: okuyucu kaydı, ödünç, iade, uzatma, rezervasyon,
+gecikme hesabı. Raporlamanın da önkoşulu.
+
+#### Aşama D — Raporlama
+
+Kullanıcının listesi: konu dağılımı, koleksiyon geliştirme kararları, yeni gelen
+kaynaklar, en çok okunanlar, kim ne zaman değiştirdi, ödünç ve gecikme sayıları.
+Aşama C'ye bağlı.
+
+#### Kalan küçük işler
+
+1. `docs/reconciliation-policy.md` — "33 isolated SQLite test pass" ifadesi artık
+   doğru ama testlerin SQLite vekili kullandığı ve `%` blocking'in PostgreSQL'e özel
    olduğu yazılmalı.
-2. `works.normalized_title` için ileride `NOT NULL` düşünülebilir; bugün nullable çünkü
-   yalnızca noktalama içeren bir başlık gerçekten karşılaştırılamaz.
+2. `works.normalized_title` için ileride `NOT NULL` düşünülebilir; bugün nullable
+   çünkü yalnızca noktalama içeren bir başlık gerçekten karşılaştırılamaz.
+3. §19'un iki maddesi bayat: `public.items` / `manifestation_item` düşürüldü ve
+   `entity_type`'tan `'ITEM'` çıkarıldı.
+4. `control.organizations` üzerinde RLS **yok** (ölçüldü). Kurum adları gizli değil,
+   ama kiracıya ait bir kurumu kiracı kimliğinden türetmek için `branches` üzerinden
+   gitmek gerekiyor — §0.33'te bu yanlış yapıldı ve düzeltildi.
 3. `nomens` için aynı normalizasyon (`normalized_value`) **yapıldı** — §0.27.
 4. `public.items`, `manifestation_item` ve `item_agent_relation` Aşama 6'ya kadar
    **silinmez**; `entities.entity_type` CHECK'inden `'ITEM'` çıkarmak da Aşama 6'nın işidir.

@@ -235,6 +235,94 @@ def _assert_holding_is_ours(db: Session, holding_id: UUID) -> None:
         )
 
 
+@router.get("/me")
+def whoami(
+    db: Session = Depends(tenant_db),
+    user: User = Depends(current_user),
+):
+    """Who the caller is, and which library they are acting for.
+
+    A tenant workspace opens with this: a librarian should see their own
+    institution's name before anything else, and the account they are signed in
+    as. The tenant comes from the session, never from the request -- the same
+    rule as every other route here.
+    """
+
+    tenant = db.execute(
+        text("select display_name, slug from control.tenants where id = :id"),
+        {"id": user.tenant_id},
+    ).mappings().first()
+
+    # The institution is reached through the caller's *branch*, not by asking
+    # `control.organizations` directly. `branches` carries the same fail-closed
+    # policy as the tenant tables (§0.15) so this returns the caller's own
+    # organization; `organizations` has no policy at all, and the first version
+    # of this function read it directly and reported whichever organization
+    # sorted first -- somebody else's.
+    organization = db.execute(
+        text(
+            "select o.name from control.branches b "
+            "join control.organizations o on o.id = b.organization_id "
+            "order by b.is_default desc, b.name limit 1"
+        )
+    ).scalar()
+
+    return {
+        "email": user.email,
+        "display_name": user.display_name,
+        "role": user.role,
+        "tenant_id": str(user.tenant_id),
+        "tenant_name": tenant["display_name"] if tenant else None,
+        "tenant_slug": tenant["slug"] if tenant else None,
+        "organization_name": organization,
+    }
+
+
+@router.get("/summary")
+def summary(
+    db: Session = Depends(tenant_db),
+    user: User = Depends(current_user),
+):
+    """The numbers a librarian wants on arrival.
+
+    Every one of them is scoped by the policies rather than by a `WHERE`: this
+    runs inside `tenant_session`, so the counts are of the caller's own library
+    whether or not this function remembers to say so.
+    """
+
+    row = db.execute(
+        text(
+            """
+            SELECT
+                (SELECT count(*) FROM tenant.holdings) AS holdings,
+                (SELECT count(*) FROM tenant.holdings
+                  WHERE status <> 'suppressed') AS published_holdings,
+                (SELECT count(*) FROM tenant.items) AS items,
+                (SELECT count(*) FROM tenant.items
+                  WHERE availability_status = 'available') AS available,
+                (SELECT count(*) FROM tenant.items
+                  WHERE availability_status = 'on_loan') AS on_loan,
+                (SELECT count(*) FROM control.branches) AS branches,
+                (SELECT count(*) FROM tenant.change_proposals) AS proposals,
+                (SELECT count(*) FROM tenant.change_proposals
+                  WHERE status = 'pending') AS pending_proposals
+            """
+        )
+    ).mappings().one()
+
+    return {
+        "tenant_id": str(user.tenant_id),
+        "holdings": row["holdings"],
+        "published_holdings": row["published_holdings"],
+        "items": row["items"],
+        "available": row["available"],
+        "on_loan": row["on_loan"],
+        "branches": row["branches"],
+        "proposals": row["proposals"],
+        "pending_proposals": row["pending_proposals"],
+    }
+
+
 @router.get("/branches")
 def list_branches(
     db: Session = Depends(tenant_db),
