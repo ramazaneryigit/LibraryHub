@@ -1,0 +1,356 @@
+/* Yönetim arayüzü. style.css'in değişkenlerini ve genel görünümünü kullanır;
+   burada yalnızca panelin kendine özgü yerleşimi var. */
+
+/* `hidden` özniteliği tarayıcının `[hidden] { display: none }` kuralıyla
+   çalışır ve o kuralın özgüllüğü çok düşüktür: aşağıdaki `.stack { display:
+   flex }` onu ezer. Sonuç, `hidden` yazılmış bir formun açılışta görünmesiydi.
+   Bu satır olmadan her `display` kuralı `hidden`'ı sessizce geçersiz kılar. */
+[hidden] {
+    display: none !important;
+}
+
+.admin-main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 28px 32px 60px;
+}
+
+.session {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+    color: var(--muted);
+}
+
+.session strong {
+    color: var(--text);
+}
+
+/* --------------------------------------------------------------- giriş */
+
+.login-card {
+    max-width: 420px;
+    margin: 60px auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+}
+
+.login-card h2 {
+    margin-top: 0;
+}
+
+/* ---------------------------------------------------------------- panel */
+
+.tabs {
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+}
+
+.tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 10px 14px;
+    font-size: 15px;
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.tab:hover {
+    color: var(--primary-light);
+}
+
+.tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 600;
+}
+
+.toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.toolbar label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.toolbar select,
+.toolbar input {
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    background: var(--surface);
+    color: var(--text);
+}
+
+button {
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+button:hover {
+    border-color: var(--primary-light);
+    color: var(--primary-light);
+}
+
+button.primary {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+}
+
+button.primary:hover {
+    background: var(--primary-light);
+    color: #fff;
+}
+
+button.danger:hover {
+    border-color: #b91c1c;
+    color: #b91c1c;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.note {
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.muted {
+    color: var(--muted);
+}
+
+code {
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 13px;
+}
+
+/* -------------------------------------------------------------- kartlar */
+
+.stack {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.stack label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.stack input,
+.stack select {
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    background: var(--surface);
+    color: var(--text);
+}
+
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+}
+
+.card h3 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+/* -------------------------------------------------------------- listeler */
+
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    cursor: pointer;
+}
+
+.item:hover {
+    border-color: var(--primary-light);
+}
+
+.item.selected {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(32, 99, 155, 0.14);
+}
+
+.item .grow {
+    flex: 1;
+    min-width: 0;
+}
+
+.item .title {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.item .sub {
+    font-size: 13px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    background: var(--background);
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.badge.pending { border-color: #f59e0b; color: #b45309; }
+.badge.accepted { border-color: #2563eb; color: #1d4ed8; }
+.badge.applied { border-color: #15803d; color: #15803d; }
+.badge.rejected { border-color: #b91c1c; color: #b91c1c; }
+.badge.withdrawn { border-color: var(--border); }
+.badge.admin { border-color: var(--primary); color: var(--primary); }
+.badge.inactive { border-color: #b91c1c; color: #b91c1c; }
+
+/* --------------------------------------------------------------- detay */
+
+.detail {
+    background: var(--surface);
+    border: 1px solid var(--primary-light);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+}
+
+.detail h3 {
+    margin-top: 0;
+}
+
+.detail dl {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 6px 14px;
+    margin: 0 0 14px;
+    font-size: 14px;
+}
+
+.detail dt {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.detail dd {
+    margin: 0;
+    word-break: break-word;
+}
+
+table.changes {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    margin-bottom: 14px;
+}
+
+table.changes th,
+table.changes td {
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+table.changes th {
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+table.changes td.was {
+    color: var(--muted);
+    text-decoration: line-through;
+}
+
+table.changes td.now {
+    color: #15803d;
+    font-weight: 600;
+}
+
+.detail .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+}
+
+.detail .actions input {
+    flex: 1;
+    min-width: 220px;
+    padding: 8px 11px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.result-line {
+    font-size: 13px;
+    margin-top: 10px;
+}
+
+.result-line.ok { color: #15803d; }
+.result-line.warn { color: #b45309; }
+.result-line.bad { color: #b91c1c; }

@@ -44,6 +44,12 @@ def create_app() -> FastAPI:
     def root():
         return FileResponse("app/static/index.html")
 
+    # The curation panel. A plain path rather than `/static/admin.html` because
+    # it is a place people are sent, not an asset.
+    @application.get("/admin", include_in_schema=False)
+    def admin_panel():
+        return FileResponse("app/static/admin.html")
+
     return application
 
 

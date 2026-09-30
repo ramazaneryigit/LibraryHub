@@ -1635,6 +1635,106 @@ bilerek daha az yetkili.
 
 ---
 
+### 0.23 Olay: ölçek fixture'ları gerçek kayıtlara bağlanıyordu
+
+#### Belirti
+
+Kullanıcı "Suç ve Ceza" aradı ve **hiçbir kütüphane görünmedi**. Arama çalışıyordu;
+cevap yanlıştı.
+
+#### Ölçüm
+
+| Ölçüm | Değer |
+|---|---|
+| `tenant.holdings` toplam | 946 |
+| — ölçek fixture'ı | **930** |
+| — gerçek | **16** |
+| 1867 Rusça baskıya bağlı holding | **93**, bunun **92'si uydurma kurum** |
+
+Üreteç, oluşturduğu her holding'i `order by entity_id limit 12` ile seçilmiş
+manifestation'lara bağlıyordu — ve onlar **gerçek** kayıtlardı. Yani 930 holding dört
+gerçek esere yığılmıştı ve her eser yüz uydurma kütüphanenin altında kalıyordu.
+
+Üstündeki yorum şuydu: *"Var olan Manifestation'ları yeniden kullan: tek bir
+bibliyografik kaydı birçok kurumun tutması, plane ayrımının tam da amacı."* **Niyet
+doğruydu, kayıt seçimi değil.** Paylaşılan bir katalogda var olan her manifestation
+birinin gerçek verisidir; güvenli seçilebilecek bir tane yoktur.
+
+#### Düzeltme
+
+Fixture'lar artık **kendi** expression ve manifestation'larını yaratıyor (işaretli,
+her şey gibi) ve yalnızca onlara bağlanıyor. Kural: **bir fixture yalnızca kendi
+ürettiği kayda işaret edebilir.**
+
+`purge()` de aynı dersi aldı: eserleri ve kurumları işaretten siliyordu, yeni
+expression/manifestation'ları geride bırakırdı ve sonraki çalışma boşa bağlanırdı.
+
+Kirli satırlar temizlendi (100 kiracı, 300 eser, 930 holding) ve katalog gerçek
+16 eserine, 5 kurumuna, 16 holding'ine döndü.
+
+#### Neden kalıcı bir kontrol
+
+Hata **dışarıdan görünmezdi**: arama kusursuz çalışıyordu, sadece cevabı kurguydu.
+Bu yüzden kural doğrudan sınanıyor — `run_scale_checks.py` her fixture holding'inin
+hedefini işaretli kümele karşılaştırıyor ve **kaç holding incelediğini** de bildiriyor,
+çünkü yüklü fixture yokken kontrol boş geçer.
+
+---
+
+### 0.24 Yönetim paneli arayüzü — TAMAMLANDI
+
+#### Ne var
+
+`/admin` tek sayfa: **Öneriler**, **Personel**, **Kurumlar**. Mevcut arayüzün
+kurallarına uyuyor — çerçeve yok, `escapeHtml`, hash yönlendirme, Türkçe yorumlar.
+
+* **Öneriler**: durum süzgeci, özet sayaçları, detayda alan alan `şu an → önerilen`,
+  karar (not ile) ve uygulama. Uygulama sonucu **hangi alanların yazıldığını ve
+  hangilerinin beyaz liste dışı olduğu için elendiğini** gösteriyor.
+* **Personel**: kurum/rol süzgeci, hesap açma, düzenleme, parola sıfırlama, oturum
+  bitirme, hesap kapatma. Yönetici hesaplarında bu düğmeler **hiç çizilmiyor** —
+  çizilse de sunucu 403 verirdi, ama boşuna denenecek bir düğme göstermenin anlamı yok.
+* **Kurumlar**: personel sayısıyla liste, ve kurumların buradan **açılmadığını**
+  söyleyen not.
+
+#### Oturum
+
+Giriş `/auth/login` ile, belirteç `localStorage`'da. Bu, aynı kaynaktaki bir XSS'in
+belirteci okuyabileceği anlamına gelir; panel bu yüzden sunucudan gelen her değeri
+`escapeHtml`'den geçiriyor. **HttpOnly çerez daha güçlü olurdu** ve API'nin çerez
+kabul etmesini gerektirirdi — bu ayrı bir iş, ve yapılmadığı burada yazılı.
+
+#### Ekran görüntüsü almanın bulduğu hata
+
+"Yeni hesap" formu, HTML'de `hidden` yazılı olmasına rağmen **açılışta görünüyordu**.
+Sebep klasik: `hidden` özniteliği tarayıcının `[hidden] { display: none }` kuralıyla
+çalışır ve o kuralın özgüllüğü çok düşüktür — `.stack { display: flex }` onu ezer.
+`admin.css`'e açık bir `[hidden] { display: none !important }` eklendi.
+
+Bunu **hiçbir test yakalayamazdı**; kod okuyarak da gözden kaçar. Gerçek tarayıcıda
+ekran görüntüsü almak, bu sınıf hataların tek kanıtı.
+
+#### İkinci küçük tuzak
+
+`/auth/login` hesabı `{token, expires_at, user}` içinde sarar; `/auth/me` **doğrudan**
+hesabı döndürür. Aynı sanıp `me.user.role` yazmak, panelin sessizce giriş ekranında
+kalmasına yol açıyordu.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **123/123** |
+| Senaryo kontrolleri | **32/32** |
+| `alembic check` | temiz |
+| `/admin`, `/static/admin.*` | 200 |
+| Giriş ekranı (gerçek tarayıcı) | çizildi |
+| Öneriler / Personel / Kurumlar | üçü de çizildi, API verisiyle |
+| Yönetici olmayan hesapla giriş | panel reddediyor, açıklamayla |
+| Veri | `works=16 entities=79 items=12 holdings=16` — temizlik sonrası |
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman

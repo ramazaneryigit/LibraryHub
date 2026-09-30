@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LibraryHub · Yönetim</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/admin.css">
+</head>
+
+<body class="admin">
+
+<header class="topbar">
+    <div class="brand">
+        <div class="logo">LH</div>
+
+        <div>
+            <h1>LibraryHub · Yönetim</h1>
+            <p>Paylaşılan kaydın küratörlüğü ve kurum yönetimi</p>
+        </div>
+
+        <div id="session" class="session"></div>
+    </div>
+</header>
+
+<main class="admin-main">
+
+    <!-- ------------------------------------------------------ giriş -->
+    <section id="login-view" class="login-card" hidden>
+        <h2>Yönetici girişi</h2>
+
+        <p class="muted">
+            Bu ekranlar yalnızca <code>admin</code> rolündeki hesaplara açıktır.
+            Kütüphaneci hesapları kendi kiracı düzlemlerinde çalışır.
+        </p>
+
+        <form id="login-form" class="stack">
+            <label>
+                E-posta
+                <input id="login-email" type="email" required autocomplete="username">
+            </label>
+
+            <label>
+                Parola
+                <input id="login-password" type="password" required autocomplete="current-password">
+            </label>
+
+            <button type="submit" class="primary">Giriş</button>
+        </form>
+
+        <div id="login-status" class="status" hidden></div>
+    </section>
+
+    <!-- ------------------------------------------------------ panel -->
+    <div id="workspace" hidden>
+
+        <nav class="tabs" id="tabs">
+            <button type="button" class="tab" data-view="proposals">Öneriler</button>
+            <button type="button" class="tab" data-view="staff">Personel</button>
+            <button type="button" class="tab" data-view="tenants">Kurumlar</button>
+        </nav>
+
+        <div id="view-status" class="status" hidden></div>
+
+        <!-- ------------------------------------------ öneriler -->
+        <section id="view-proposals" class="view" hidden>
+            <div class="toolbar">
+                <label>
+                    Durum
+                    <select id="proposal-status">
+                        <option value="pending">Bekleyen</option>
+                        <option value="all">Hepsi</option>
+                        <option value="accepted">Kabul edilmiş</option>
+                        <option value="applied">Uygulanmış</option>
+                        <option value="rejected">Reddedilmiş</option>
+                        <option value="withdrawn">Geri çekilmiş</option>
+                    </select>
+                </label>
+
+                <button type="button" id="proposal-refresh">Yenile</button>
+                <span id="proposal-summary" class="muted"></span>
+            </div>
+
+            <p class="muted note">
+                Karar vermek hiçbir şey yazmaz. <strong>Uygula</strong> yazar ve
+                yalnızca beyaz listedeki alanları; hangi alanların elendiği
+                uygulama sonucunda görünür.
+            </p>
+
+            <div id="proposal-detail" class="detail" hidden></div>
+            <div id="proposal-list" class="list"></div>
+        </section>
+
+        <!-- ------------------------------------------ personel -->
+        <section id="view-staff" class="view" hidden>
+            <div class="toolbar">
+                <label>
+                    Kurum
+                    <select id="staff-tenant"><option value="">Hepsi</option></select>
+                </label>
+
+                <label>
+                    Rol
+                    <select id="staff-role">
+                        <option value="">Hepsi</option>
+                        <option value="admin">admin</option>
+                        <option value="librarian">librarian</option>
+                        <option value="viewer">viewer</option>
+                    </select>
+                </label>
+
+                <button type="button" id="staff-refresh">Yenile</button>
+                <button type="button" id="staff-new" class="primary">Yeni hesap</button>
+            </div>
+
+            <form id="staff-form" class="card stack" hidden>
+                <h3 id="staff-form-title">Yeni hesap</h3>
+
+                <label>
+                    Kurum
+                    <select id="staff-form-tenant" required></select>
+                </label>
+
+                <label>
+                    E-posta
+                    <input id="staff-form-email" type="email" required>
+                </label>
+
+                <label>
+                    Ad soyad
+                    <input id="staff-form-name" required minlength="2">
+                </label>
+
+                <label>
+                    Rol
+                    <select id="staff-form-role">
+                        <option value="librarian">librarian</option>
+                        <option value="viewer">viewer</option>
+                    </select>
+                </label>
+
+                <label class="staff-password-field">
+                    Parola
+                    <input id="staff-form-password" type="password" minlength="10">
+                </label>
+
+                <p class="muted note" id="staff-form-note">
+                    Açılan hesap <strong>doğrulanmamış</strong> olur: uygulama
+                    rolü doğrulanmış bir hesap açamaz, adresi sahibi onaylar.
+                    Yönetici hesabı buradan açılamaz.
+                </p>
+
+                <div class="row">
+                    <button type="submit" class="primary">Kaydet</button>
+                    <button type="button" id="staff-form-cancel">Vazgeç</button>
+                </div>
+            </form>
+
+            <div id="staff-detail" class="detail" hidden></div>
+            <div id="staff-list" class="list"></div>
+        </section>
+
+        <!-- ------------------------------------------ kurumlar -->
+        <section id="view-tenants" class="view" hidden>
+            <div class="toolbar">
+                <button type="button" id="tenant-refresh">Yenile</button>
+                <span class="muted" id="tenant-summary"></span>
+            </div>
+
+            <p class="muted note">
+                Kurumlar buradan <strong>açılmaz</strong>: uygulama rolünün
+                <code>control.tenants</code> üzerinde yalnızca okuma yetkisi var.
+                Yeni kurum <code>register_domain.py</code> ile açılır.
+            </p>
+
+            <div id="tenant-list" class="list"></div>
+        </section>
+
+    </div>
+
+</main>
+
+<footer>
+    LibraryHub · yönetim arayüzü
+</footer>
+
+<script src="/static/admin.js"></script>
+
+</body>
+
+</html>
