@@ -2144,6 +2144,95 @@ yanlıştı ve bunu ancak ölçüm düzeltti.
 
 ---
 
+### 0.31 Türetilmiş arama indeksi, indeksleyici ve `reindex`
+
+#### §9.3'ün istediği tek şey
+
+> Arama indeksi **asla** doğruluk kaynağı olmaz; her zaman PostgreSQL'den tam
+> yeniden üretilebilir olmalıdır (`reindex` komutu tanımlı ve test edilmiş olmalı).
+
+§9.1 ise arama motorunun **sonra** geleceğini ve bugünkü sorunun motor eksikliği
+değil mevcut aramanın yavaşlığı olduğunu söylüyor. Yani bu adımda kanıtlanması
+gereken şey bir motor değil, şu: indeks **kurulabiliyor, artımlı beslenebiliyor,
+atılıp yeniden aynı hâle getirilebiliyor.**
+
+#### Tasarım: varlık başına bir belge, her belge hangi eserlere ait olduğunu taşır
+
+Belge **yalnızca kendi metnini** tutar. Bir eserin belgesi eserin başlığını tutar;
+bir kişinin belgesi kişinin adlarını tutar. Arama belgeleri eşleştirir ve her
+belgenin taşıdığı `work_ids`'i birleştirir — yani bir yazar adı eşleşmesi kişinin
+belgesini bulur ve **eserlerine iner**, eserlerin yazarın adını tekrarlamasına
+gerek kalmadan.
+
+Bu, outbox eşlemesini **bire bir** yapan şeydir. Eserin belgesi yazarlarının
+adlarını tekrarlasaydı, bir nomen değişikliği o kişinin yazdığı **her eseri** bulup
+yeniden kurmak zorunda kalırdı. Bunun yerine olay kişinin belgesine çözülür ve
+orada durur.
+
+Ölçülen sonuç: **71 belge**, 6 tür — 16 eser, 12 yayın, 12 ifade, 12 kişi,
+11 kavram, 8 kurum.
+
+#### İki çağıran, tek tanım
+
+`index()` ve `reindex()` belgeyi aynı `documents()` fonksiyonuyla kurar. İkinci bir
+uygulama yok, dolayısıyla ayrışacak bir şey de yok. Gövde **Python'da** kurulur
+çünkü `normalize_text` Python'dur ve bu imajda `unaccent` yok — `nomens`
+kararının (§0.27) aynısı.
+
+#### Doğrulama, ve iki kontrolün yakaladıkları
+
+`run_scale_checks.py`'ye iki kontrol eklendi ve **ikisi de ilk koşuda bir şey
+yakaladı**:
+
+**1. "Arama indeksi eksiksiz"** — ilk hâli "her belge bir esere ulaşmalı" diyordu
+ve **18 belge** yüzünden düştü. Ama onlar hiç eseri olmayan kişiler ve
+kavramlardı: **doğru davranış**. Kontrol fazla katıydı; artık yalnızca "her eserin
+belgesi var" ve "boş gövde yok" üzerine düşüyor, ulaşamayanları **bildiriyor**.
+
+**2. "Outbox: her tablo izleniyor ya da gerekçesiyle muaf"** — yeni
+`search_documents` tablosunu **karar verilmemiş** olarak yakaladı. Doğru cevap:
+indeks **türetilmiştir** ve ona tetikleyici koymak **sonsuz döngü** yaratırdı
+(indeksleme belge yazar → olay doğar → indeksleme). Muaf listesine gerekçesiyle
+girdi.
+
+İkincisi, o kontrolün neden var olduğunun kanıtıdır: kendi eklediğim tabloyu, ben
+farkına varmadan, ilk koşuda yakaladı.
+
+**3. "Arama indeksi yeniden üretilebilir"** — §9.3'ün ta kendisi. Kontrol bilerek
+bir başlık yazar, indeksin **henüz değişmediğini** doğrular (bayat=0), outbox'ı
+tükettirir (sonrası=1), parmak izini alır, sonra tam yeniden kurar ve **iki parmak
+izinin eşit olduğunu** doğrular. Yazdığı başlığı geri koyar.
+
+| | |
+|---|---|
+| tüketim öncesi bayat | **0** — indeks kendi kendine değişmiyor |
+| tüketim sonrası | **1** — indeksleyici çalıştı |
+| artımlı parmak izi | `12a68933bb405ca0` |
+| yeniden kurulan | `12a68933bb405ca0` — **eşit** |
+
+#### Ne yapılmadı, ve neden
+
+**`/search` henüz indeksi kullanmıyor.** İndeks doğru ve eksiksiz, ama mevcut arama
+uç noktasının kendi sıralama ve `truncated` anlamları var; onları indekse taşımak
+davranış değiştiren ayrı bir adımdır ve bu turda "çalışan bir proje bırak"
+kısıtı var. `reindex.py --query` indeksi bugün de kullanıyor, kontroller onu
+doğru tutuyor, ve geçiş için gereken her şey yerinde.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **123/123** (SQLite `uuid[]` yerine JSON varyantıyla kuruyor) |
+| Senaryo kontrolleri | **39/39** (2 yeni) |
+| `alembic check` | temiz, tek head `f3b8d1e64c72` |
+| Tam yeniden kurma | **71 belge** |
+| Outbox tüketimi | 42 olay → 20 belge, **0 bekleyen** |
+| `Dostoyevski` / `dostoevsky` | ikisi de `Suç ve Ceza` — aksan duyarsız |
+| `KKU-123456` (barkod) | `Suç ve Ceza` — manifestation belgesi üzerinden |
+| Yeniden üretilebilirlik | artımlı = yeniden kurulan |
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman

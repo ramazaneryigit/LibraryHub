@@ -833,6 +833,9 @@ class _RollbackHere(Exception):
 EXCUSED_FROM_OUTBOX = {
     "alembic_version": "migration bookkeeping",
     "outbox_events": "the table itself",
+    # The index is derived, and watching it would loop: indexing writes
+    # documents, which would raise events, which would index again.
+    "search_documents": "derived; watching it would loop",
     "entities": "the registry; its subtypes carry the events",
     "source_systems": "ingestion input, not the catalogue",
     "source_records": "ingestion input, not the catalogue",
@@ -1138,6 +1141,139 @@ def check_holdings_reach_the_catalogue(owner) -> None:
     )
 
 
+def check_search_index_is_reproducible(owner) -> None:
+    """A rebuilt index equals the one the outbox maintained.
+
+    §9.3 in one assertion. The index is allowed to be stale, partial or wrong --
+    it is never the source of truth -- but it must be reproducible. So the check
+    corrupts it on purpose, feeds it the outbox, and compares what it then holds
+    against a full rebuild. If those two disagree, one of the two paths is wrong
+    and a search result is quietly lying.
+
+    It writes a title, and puts it back, because the incremental path can only be
+    tested by making a change. That write is also the reason the check is worth
+    having: it proves the index does *not* move until the indexer runs, which is
+    what stops the source tables and the index drifting apart unnoticed.
+    """
+
+    import hashlib
+
+    from app.services.search_index import consume, index, reindex
+
+    def fingerprint() -> str:
+        digest = hashlib.sha256()
+
+        for row in owner.execute(
+            text(
+                "select entity_id, entity_type, label, body, work_ids "
+                "from public.search_documents order by entity_id"
+            )
+        ).all():
+            digest.update("|".join(str(value) for value in row).encode("utf-8"))
+
+        return digest.hexdigest()[:16]
+
+    target = owner.execute(
+        text("select entity_id from public.works order by entity_id limit 1")
+    ).scalar()
+
+    original = owner.execute(
+        text("select canonical_title from public.works where entity_id = :id"),
+        {"id": target},
+    ).scalar()
+
+    marker = "Reindex Sinama Baskisi"
+
+    try:
+        reindex(owner)
+        baseline = fingerprint()
+
+        owner.execute(
+            text("update public.works set canonical_title = :title where entity_id = :id"),
+            {"title": marker, "id": target},
+        )
+
+        # The index must still be behind: the write fired an outbox event and
+        # nothing has consumed it.
+        stale = owner.execute(
+            text(
+                "select count(*) from public.search_documents "
+                "where entity_id = :id and body like :marker"
+            ),
+            {"id": target, "marker": f"%reindex sinama baskisi%"},
+        ).scalar()
+
+        consume(owner)
+        incremental = fingerprint()
+
+        after = owner.execute(
+            text(
+                "select count(*) from public.search_documents "
+                "where entity_id = :id and body like :marker"
+            ),
+            {"id": target, "marker": "%reindex sinama baskisi%"},
+        ).scalar()
+
+        reindex(owner)
+        rebuilt = fingerprint()
+
+        record(
+            "Arama indeksi yeniden uretilebilir",
+            stale == 0 and after == 1 and incremental == rebuilt,
+            f"tuketim oncesi bayat={stale}, sonrasi={after}, "
+            f"artimli={incremental} yeniden={rebuilt} "
+            f"(baslangic {baseline})",
+        )
+
+    finally:
+        owner.execute(
+            text("update public.works set canonical_title = :title where entity_id = :id"),
+            {"title": original, "id": target},
+        )
+
+        consume(owner)
+        index(owner, [target])
+
+
+def check_search_index_is_complete(owner) -> None:
+    """Every work has a document, and no document is empty.
+
+    A work with no document is a title nobody can find, and the failure is
+    invisible from the search side: the query returns fewer rows and nothing says
+    which ones are missing.
+
+    Documents that resolve to no work are *reported*, not failed. A person who
+    has written nothing is a legitimate entity with nothing to resolve to, and
+    calling that a defect would train the reader to ignore the line.
+    """
+
+    works = owner.execute(text("select count(*) from public.works")).scalar()
+
+    documents = owner.execute(
+        text(
+            "select count(*) from public.search_documents where entity_type = 'WORK'"
+        )
+    ).scalar()
+
+    empty_bodies = owner.execute(
+        text("select count(*) from public.search_documents where body = ''")
+    ).scalar()
+
+    unreachable = owner.execute(
+        text(
+            "select count(*) from public.search_documents "
+            "where cardinality(work_ids) = 0"
+        )
+    ).scalar()
+
+    record(
+        "Arama indeksi eksiksiz",
+        works == documents and empty_bodies == 0,
+        f"{documents}/{works} eser belgesi, {empty_bodies} bos govde; "
+        f"{unreachable} belge hicbir esere ulasmiyor (kisi/kavram olabilir)",
+    )
+
+
 def check_app_imports_resolve() -> None:
     """Every absolute `app.*` import in the source points at something real.
 
@@ -1232,6 +1368,10 @@ def main() -> int:
         check_app_imports_resolve()
         check_nomen_normalization(owner)
         check_holdings_reach_the_catalogue(owner)
+
+        print("\n-- arama indeksi --")
+        check_search_index_is_complete(owner)
+        check_search_index_is_reproducible(owner)
 
         print("\n-- outbox --")
         check_outbox_same_transaction(owner)
