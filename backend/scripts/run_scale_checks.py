@@ -1274,6 +1274,74 @@ def check_search_index_is_complete(owner) -> None:
     )
 
 
+def check_search_finds_what_it_should(owner) -> None:
+    """Anything a reader could type finds the work it belongs to.
+
+    `/search` no longer walks twenty joins; it looks a probe up in the index. That
+    is only safe if the index can find everything the old query could, so this
+    asks the two ends of the question directly: every work by its own title, and
+    every copy by its own barcode.
+
+    A missing title is a work nobody can find, and the symptom is invisible from
+    the search side -- the query simply returns fewer rows and nothing says which
+    one is absent. That is why this is a check and not a hope.
+    """
+
+    from app.services.search_index import reindex, search
+
+    # The index this asserts about has to be current first.
+    reindex(owner)
+
+    missing_titles = []
+
+    for entity_id, title in owner.execute(
+        text(
+            "select entity_id, canonical_title from public.works "
+            "where canonical_title is not null "
+            "order by canonical_title"
+        )
+    ).all():
+        if entity_id not in search(owner, title, limit=200):
+            missing_titles.append(title[:36])
+
+    missing_barcodes = []
+
+    # The index resolves a copy to the *work*, not to the manifestation, so the
+    # comparison has to be against the work the copy's manifestation belongs to.
+    # Comparing a manifestation id against work ids is the mistake this check
+    # made on its first run, and it reported ten barcodes as missing that were
+    # findable all along.
+    for barcode, work_ids in owner.execute(
+        text(
+            "select v.barcode, array_agg(distinct we.work_entity_id) "
+            "from public.items_compat v "
+            "join public.expression_manifestation em "
+            "  on em.manifestation_entity_id = v.manifestation_entity_id "
+            "join public.work_expression we "
+            "  on we.expression_entity_id = em.expression_entity_id "
+            "where v.barcode is not null and v.barcode <> '' "
+            "group by v.barcode "
+            "order by v.barcode"
+        )
+    ).all():
+        found = set(search(owner, barcode, limit=200))
+
+        if not found.intersection(work_ids):
+            missing_barcodes.append(barcode[:36])
+
+    record(
+        "Arama indekste ne varsa onu buluyor",
+        not missing_titles and not missing_barcodes,
+        (
+            f"{len(missing_barcodes)} barkod ve {len(missing_titles)} baslik "
+            "bulunamadi: "
+            + ", ".join((missing_titles + missing_barcodes)[:3])
+            if (missing_titles or missing_barcodes)
+            else "her baslik ve her barkod kendi eserini buluyor"
+        ),
+    )
+
+
 def check_app_imports_resolve() -> None:
     """Every absolute `app.*` import in the source points at something real.
 
@@ -1372,6 +1440,7 @@ def main() -> int:
         print("\n-- arama indeksi --")
         check_search_index_is_complete(owner)
         check_search_index_is_reproducible(owner)
+        check_search_finds_what_it_should(owner)
 
         print("\n-- outbox --")
         check_outbox_same_transaction(owner)

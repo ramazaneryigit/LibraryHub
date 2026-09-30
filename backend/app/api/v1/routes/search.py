@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ....core.text import normalize_text
 from ....db import get_db
 from ....db.models import Concept
+from ....services import search_index
 from ....services.work_detail import build_work_detail
 from ....services.entity_merge import resolve_canonical_entity_id
 
@@ -134,162 +134,34 @@ def search(
                 "non-whitespace character"
             ),
         )
-
     probe = q.strip()
-    search_term = f"%{probe}%"
 
-    # Names are matched against `nomens.normalized_value`, not `value`.
+    # Candidates come from the derived index, not from a twenty-condition join.
     #
-    # §14: a reader who types `Ayse` should find `Ayşe`, and the person stored as
-    # `Dostoyevski, Fyodor` should be found by `Dostoyevski`. Both sides go
-    # through `normalize_text`, so the comparison is like with like -- which is
-    # the whole reason the column exists. It is also GIN-trigram indexed, so this
-    # is the cheaper of the two conditions, not the more expensive.
+    # That join walked works, agents, nomens, identifiers, subjects, expressions,
+    # manifestations, publishers and copies in one statement and matched each
+    # with its own `ILIKE` -- measured at 944 ms at the top of §15.2, and growing
+    # with every field anybody thought to search.
     #
-    # `normalize_text` returns None for a probe with nothing comparable left in
-    # it; `LIKE NULL` is NULL, which is not true, so such a probe simply matches
-    # no names rather than all of them.
-    normalized_probe = normalize_text(probe)
-    normalized_term = f"%{normalized_probe}%" if normalized_probe else None
-
-    query = """
-    SELECT DISTINCT
-        w.entity_id,
-        w.canonical_title
-    FROM works w
-
-    -- Work tanımlayıcıları
-    LEFT JOIN identifiers work_identifier
-      ON work_identifier.entity_id = w.entity_id
-
-    -- Work yazarları / yaratıcıları
-    LEFT JOIN work_agent_relation war
-      ON war.work_entity_id = w.entity_id
-    LEFT JOIN persons work_person
-      ON work_person.entity_id = war.agent_entity_id
-
-    -- Work kişilerinin Nomen kayıtları
-    LEFT JOIN nomens work_person_nomen
-      ON work_person_nomen.entity_id = work_person.entity_id
-
-    -- Work kişilerinin tanımlayıcıları
-    LEFT JOIN identifiers work_person_identifier
-      ON work_person_identifier.entity_id = work_person.entity_id
-
-    -- Work konuları
-    LEFT JOIN entity_relation subject_rel
-      ON subject_rel.subject_entity_id = w.entity_id
-     AND subject_rel.predicate = 'has_subject'
-    LEFT JOIN concepts concept
-      ON concept.entity_id = subject_rel.object_entity_id
-
-    -- Work -> Expression
-    LEFT JOIN work_expression we
-      ON we.work_entity_id = w.entity_id
-    LEFT JOIN expressions expression
-      ON expression.entity_id = we.expression_entity_id
-
-    -- Expression tanımlayıcıları
-    LEFT JOIN identifiers expression_identifier
-      ON expression_identifier.entity_id = expression.entity_id
-
-    -- Expression kişileri (örn. çevirmen)
-    LEFT JOIN expression_agent_relation ear
-      ON ear.expression_entity_id = expression.entity_id
-    LEFT JOIN persons expression_person
-      ON expression_person.entity_id = ear.agent_entity_id
-
-    -- Expression kişilerinin Nomen kayıtları
-    LEFT JOIN nomens expression_person_nomen
-      ON expression_person_nomen.entity_id = expression_person.entity_id
-
-    -- Expression kişilerinin tanımlayıcıları
-    LEFT JOIN identifiers expression_person_identifier
-      ON expression_person_identifier.entity_id = expression_person.entity_id
-
-    -- Expression -> Manifestation
-    LEFT JOIN expression_manifestation em
-      ON em.expression_entity_id = expression.entity_id
-
-    LEFT JOIN manifestations manifestation
-      ON manifestation.entity_id = em.manifestation_entity_id
-
-    -- Manifestation tanımlayıcıları (ISBN vb.)
-    LEFT JOIN identifiers manifestation_identifier
-      ON manifestation_identifier.entity_id = manifestation.entity_id
-
-    -- Manifestation ajanları (örn. yayıncı)
-    LEFT JOIN manifestation_agent_relation mar
-      ON mar.manifestation_entity_id = manifestation.entity_id
-    LEFT JOIN collective_agents manifestation_agent
-      ON manifestation_agent.entity_id = mar.agent_entity_id
-
-    -- Manifestation ajanının tanımlayıcıları
-    LEFT JOIN identifiers manifestation_agent_identifier
-      ON manifestation_agent_identifier.entity_id = manifestation_agent.entity_id
-
-    -- Manifestation -> Item
-    --
-    -- Read through public.items_compat rather than the legacy tables. Copies
-    -- live in the tenant plane now, and the view is how a reader outside any
-    -- tenant sees them. Its `entity_id` is the same identifier the migrated rows
-    -- already had, so the item-level identifiers below still resolve -- which
-    -- matters, because two of them are real catalogue numbers rather than
-    -- generated ones.
-    LEFT JOIN public.items_compat item
-      ON item.manifestation_entity_id = manifestation.entity_id
-
-    -- Item tanımlayıcıları
-    --
-    -- A copy is not a global entity any more, so its identifiers are not in
-    -- `identifiers`. `public.item_identifiers` is the global read of the ones
-    -- that live in the tenant plane, and it exposes the same `entity_id` the
-    -- line above produced, so the join below reads exactly as it did.
-    LEFT JOIN public.item_identifiers item_identifier
-      ON item_identifier.entity_id = item.entity_id
-
-    WHERE
-        w.canonical_title ILIKE :search_term
-        OR w.original_title ILIKE :search_term
-        OR work_identifier.value ILIKE :search_term
-        OR work_person.canonical_name ILIKE :search_term
-        OR work_person_nomen.normalized_value LIKE :normalized_term
-        OR work_person_identifier.value ILIKE :search_term
-        OR concept.preferred_label ILIKE :search_term
-        OR expression.language ILIKE :search_term
-        OR expression_identifier.value ILIKE :search_term
-        OR expression_person.canonical_name ILIKE :search_term
-        OR expression_person_nomen.normalized_value LIKE :normalized_term
-        OR expression_person_identifier.value ILIKE :search_term
-        OR manifestation.publication_statement ILIKE :search_term
-        OR manifestation.publication_date ILIKE :search_term
-        OR manifestation.edition_statement ILIKE :search_term
-        OR manifestation_identifier.value ILIKE :search_term
-        OR manifestation_agent.canonical_name ILIKE :search_term
-        OR manifestation_agent_identifier.value ILIKE :search_term
-        OR item.barcode ILIKE :search_term
-        OR item.shelfmark ILIKE :search_term
-        OR item_identifier.value ILIKE :search_term
-
-    ORDER BY w.canonical_title
-    LIMIT :limit
-    """
-
-    rows = db.execute(
-        text(query),
-        {
-            "search_term": search_term,
-            "normalized_term": normalized_term,
-            "limit": limit,
-        },
-    ).mappings().all()
+    # `search_documents` holds one normalized body per entity plus the works a
+    # match on it resolves to, so an author-name match finds the person's document
+    # and resolves to their works without this query naming the author at all.
+    #
+    # The index is not a new source of truth. It is built from these same tables,
+    # `reindex` rebuilds it from scratch, and `run_scale_checks.py` asserts the
+    # two agree -- so a wrong index is a failed check rather than a wrong answer
+    # nobody can trace.
+    #
+    # Matching is on the normalized body, which is why `Ayse` finds `Ayşe`: the
+    # same normalization the previous query was already applying to names.
+    candidate_ids = search_index.search(db, probe, limit=limit)
 
     results = []
     seen_work_ids = set()
 
-    for row in rows:
+    for work_id in candidate_ids:
         work_detail = build_work_detail(
-            work_entity_id=row["entity_id"],
+            work_entity_id=work_id,
             db=db,
         )
 
@@ -308,11 +180,11 @@ def search(
         "query": q,
         "count": len(results),
         "limit": limit,
-        # The SQL caps at `limit` before duplicates are collapsed, so a full
+        # The index caps at `limit` before duplicates are collapsed, so a full
         # page is the honest signal that more may exist. Real pagination needs
         # the Search Plane (docs/architecture-v2.md §9); until then the client
         # is told the result set was cut rather than being left to assume it
         # saw everything.
-        "truncated": len(rows) >= limit,
+        "truncated": len(candidate_ids) >= limit,
         "results": results,
     }
