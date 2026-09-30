@@ -304,13 +304,22 @@ class TenantDatabase(Base):
 
 
 class User(Base):
-    """A staff account, belonging to exactly one tenant.
+    """A staff account, belonging to at most one tenant.
 
     ``tenant_id`` is what makes the rest of the system work: it is the value
     bound into `libraryhub.tenant_id` for every request this user makes, and the
     row level security policies on `tenant.*` do the isolation from there. A
     user is therefore never asked which library they are acting for -- guessing
     it, or accepting it from the client, would be the whole vulnerability.
+
+    It is nullable for one reason: a **platform administrator** curates the shared
+    record rather than a library. They review the proposals tenants raise, merge
+    identities, and load batches -- work that belongs to no institution, and
+    giving them a tenant would mean inventing one. `tenant_db` refuses them with a
+    403 instead of binding a tenant they do not have.
+
+    The database keeps the two apart: a user with no tenant must be an `admin`,
+    because a librarian with no library cannot act at all.
 
     ``email`` is globally unique rather than unique per tenant: login takes an
     email and nothing else, so two tenants sharing an address would make it
@@ -328,6 +337,13 @@ class User(Base):
             "account_kind IN ('institutional', 'corporate')",
             name="ck_users_account_kind",
         ),
+        # Read as: a tenant-less account is a platform administrator. The other
+        # direction is deliberately open -- an institution's own administrator may
+        # also curate the shared record.
+        CheckConstraint(
+            "tenant_id IS NOT NULL OR role = 'admin'",
+            name="ck_users_tenant_required",
+        ),
         UniqueConstraint("email", name="uq_users_email"),
         Index("ix_users_tenant_id", "tenant_id"),
         {"schema": CONTROL_SCHEMA},
@@ -338,12 +354,12 @@ class User(Base):
         default=uuid7,
     )
 
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
             f"{CONTROL_SCHEMA}.tenants.id",
             ondelete="RESTRICT",
         ),
-        nullable=False,
+        nullable=True,
     )
 
     email: Mapped[str] = mapped_column(

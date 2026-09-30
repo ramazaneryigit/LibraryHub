@@ -155,7 +155,22 @@ def tenant_db(user: User = Depends(current_user)):
     query that uses this: the filter is already there, in the policy, and adding
     a second one in application code only creates the illusion that the
     application is what protects the data.
+
+    A platform administrator has no tenant (see `User`), and is refused rather
+    than bound to one. Picking a tenant for them -- any tenant -- would be the
+    whole vulnerability: this is the one place where the value that scopes every
+    tenant query comes from, and it must come from the account or not at all.
     """
+
+    if user.tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This account is not attached to a library. The tenant plane "
+                "answers for one institution at a time; a platform "
+                "administrator curates the shared record instead."
+            ),
+        )
 
     with tenant_session(user.tenant_id) as db:
         yield db

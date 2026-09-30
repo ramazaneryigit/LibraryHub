@@ -350,7 +350,9 @@ def login(
     )
     db.commit()
 
-    tenant = db.get(Tenant, user.tenant_id)
+    # A platform administrator has no tenant, and asking for one by a NULL key is
+    # a load that can never succeed.
+    tenant = db.get(Tenant, user.tenant_id) if user.tenant_id else None
 
     return {
         "token": token,

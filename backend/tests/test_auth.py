@@ -23,6 +23,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite://")
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -254,6 +255,93 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()['tenant_id'], str(self.tenant.id))
         self.assertEqual(response.json()['count'], 0)
+
+    # ------------------------------------------- platform administrators
+
+    def _platform_administrator(self):
+        """A curator of the shared record, belonging to no library."""
+
+        administrator = User(
+            tenant_id=None,
+            email='platform@libraryhub.local',
+            display_name='Platform Yöneticisi',
+            password_hash=hash_password('parola-123'),
+            role='admin',
+            email_verified_at=datetime.now(timezone.utc),
+        )
+        self.db.add(administrator)
+        self.db.commit()
+
+        return administrator
+
+    def test_platform_administrator_logs_in_without_a_tenant(self):
+        self._platform_administrator()
+
+        response = self.client.post(
+            '/auth/login',
+            json={
+                'email': 'platform@libraryhub.local',
+                'password': 'parola-123',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['user']['role'], 'admin')
+        self.assertFalse(response.json()['user']['tenant_name'])
+
+    def test_platform_administrator_is_refused_the_tenant_plane(self):
+        """The one place the tenant comes from is the account, or nowhere.
+
+        `tenant_db` does not fall back to a default when the account has no
+        tenant: choosing one -- any one -- is exactly the vulnerability the
+        binding exists to prevent. The administrator's reach is the global plane.
+        """
+
+        self._platform_administrator()
+
+        token = self.client.post(
+            '/auth/login',
+            json={
+                'email': 'platform@libraryhub.local',
+                'password': 'parola-123',
+            },
+        ).json()['token']
+
+        response = self.client.get(
+            '/tenant/items',
+            headers={'Authorization': f'Bearer {token}'},
+        )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertIn('not attached to a library', response.json()['detail'])
+
+    def test_only_an_admin_may_have_no_tenant(self):
+        """A librarian with no library cannot act, so the database forbids it.
+
+        Enforced as a constraint rather than by the account-creation script,
+        because the script is not the only thing that can write the table.
+        """
+
+        self.db.add(
+            User(
+                tenant_id=None,
+                email='olmamali@ornek.org',
+                display_name='Olmamalı',
+                password_hash=hash_password('parola-123'),
+                role='librarian',
+                email_verified_at=datetime.now(timezone.utc),
+            )
+        )
+
+        with self.assertRaises(IntegrityError) as caught:
+            self.db.commit()
+
+        self.db.rollback()
+
+        self.assertIn(
+            'ck_users_tenant_required',
+            str(caught.exception),
+        )
 
 
 if __name__ == '__main__':

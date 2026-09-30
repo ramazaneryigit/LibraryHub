@@ -21,6 +21,18 @@ Pass it and the value lands in your shell history -- acceptable for a local
 development account, not for anything real.
 
     ... python create_user.py --list
+
+A platform administrator
+------------------------
+`--platform` opens an account with no tenant. It curates the shared record --
+reviewing proposals, merging identities, loading batches -- which belongs to no
+institution, and it is the only account kind that may omit `--tenant`. The role is
+forced to `admin`, and `tenant_db` refuses it, so it cannot reach the tenant plane
+at all (docs/architecture-v2.md §0.20).
+
+    ... python create_user.py --platform \\
+        --email platform@libraryhub.local \\
+        --name 'Platform Yoneticisi'
 """
 
 import argparse
@@ -42,19 +54,21 @@ ROLES = ("admin", "librarian", "viewer")
 
 
 def list_users(connection) -> None:
+    # `left join`, not `join`: a platform administrator has no tenant, and an
+    # inner join would hide exactly the accounts that are hardest to find.
     rows = connection.execute(
         text(
             """
             select u.email, u.display_name, u.role, u.is_active,
                    t.slug as tenant_slug, count(s.id) as aktif_oturum
             from control.users u
-            join control.tenants t on t.id = u.tenant_id
+            left join control.tenants t on t.id = u.tenant_id
             left join control.sessions s
                    on s.user_id = u.id
                   and s.revoked_at is null
                   and s.expires_at > now()
             group by u.id, t.slug
-            order by t.slug, u.email
+            order by t.slug nulls first, u.email
             """
         )
     ).fetchall()
@@ -66,7 +80,8 @@ def list_users(connection) -> None:
     print(f"{len(rows)} kullanıcı:\n")
     for email, name, role, active, tenant_slug, sessions in rows:
         flag = "" if active else " (PASIF)"
-        print(f"  {email:34} {role:10} {tenant_slug:48} oturum={sessions}{flag}")
+        where = tenant_slug or "(platform)"
+        print(f"  {email:34} {role:10} {where:48} oturum={sessions}{flag}")
 
 
 def main() -> int:
@@ -81,6 +96,11 @@ def main() -> int:
         help="override the account kind inferred from the domain",
     )
     parser.add_argument("--password", help="omit to be prompted")
+    parser.add_argument(
+        "--platform",
+        action="store_true",
+        help="no tenant: a platform administrator (forces --role admin)",
+    )
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
 
@@ -96,13 +116,29 @@ def main() -> int:
             for flag, value in (
                 ("--email", args.email),
                 ("--name", args.name),
-                ("--tenant", args.tenant),
             )
             if not value
         ]
 
         if missing:
             parser.error(f"gerekli: {', '.join(missing)} (veya --list)")
+
+        if args.platform and args.tenant:
+            parser.error(
+                "--platform ve --tenant birlikte kullanilamaz: platform hesabi "
+                "hicbir kutuphaneye bagli degildir"
+            )
+
+        if not args.platform and not args.tenant:
+            parser.error("gerekli: --tenant (veya --platform)")
+
+        role = args.role
+
+        if args.platform:
+            if args.role != "admin":
+                print("NOT: platform hesabi daima 'admin'; --role yok sayildi.")
+
+            role = "admin"
 
         email = args.email.strip().lower()
 
@@ -125,19 +161,27 @@ def main() -> int:
                 f"'{account_kind}' varsayildi. --kind ile degistirebilirsiniz."
             )
 
-        tenant_id = connection.execute(
-            text("select id from control.tenants where slug = :slug"),
-            {"slug": args.tenant},
-        ).scalar()
+        tenant_id = None
 
-        if tenant_id is None:
-            print(f"Tenant bulunamadi: {args.tenant}")
-            print("Mevcut tenant'lar:")
-            for slug, name in connection.execute(
-                text("select slug, display_name from control.tenants order by slug")
-            ).fetchall():
-                print(f"  {slug:48} {name}")
-            return 1
+        if not args.platform:
+            tenant_id = connection.execute(
+                text("select id from control.tenants where slug = :slug"),
+                {"slug": args.tenant},
+            ).scalar()
+
+            if tenant_id is None:
+                print(f"Tenant bulunamadi: {args.tenant}")
+                print("Mevcut tenant'lar:")
+                for slug, name in connection.execute(
+                    text(
+                        "select slug, display_name from control.tenants "
+                        "order by slug"
+                    )
+                ).fetchall():
+                    print(f"  {slug:48} {name}")
+                return 1
+
+        target = "(platform)" if args.platform else args.tenant
 
         password = args.password
 
@@ -179,14 +223,14 @@ def main() -> int:
                     "email": email,
                     "name": args.name,
                     "password_hash": password_hash,
-                    "role": args.role,
+                    "role": role,
                     "account_kind": account_kind,
                 },
             )
 
             print(
-                f"Kullanici olusturuldu: {email} ({args.role}, "
-                f"{account_kind}) -> {args.tenant}"
+                f"Kullanici olusturuldu: {email} ({role}, "
+                f"{account_kind}) -> {target}"
             )
             print("  e-posta dogrulanmis sayildi: hesabi yonetici acti")
         else:
@@ -208,7 +252,7 @@ def main() -> int:
                     "id": existing,
                     "password_hash": password_hash,
                     "name": args.name,
-                    "role": args.role,
+                    "role": role,
                     "account_kind": account_kind,
                 },
             )
@@ -224,7 +268,7 @@ def main() -> int:
                 {"id": existing},
             ).rowcount
 
-            print(f"Kullanici guncellendi: {email} ({args.role}) -> {args.tenant}")
+            print(f"Kullanici guncellendi: {email} ({role}) -> {target}")
             print(f"  iptal edilen oturum: {revoked}")
 
     return 0

@@ -1371,6 +1371,95 @@ import'u sessizce düşürmek yerine söylüyor.
 
 ---
 
+### 0.20 Platform yöneticisi kimliği — TAMAMLANDI
+
+#### Bıraktığım gevşek uç
+
+§0.19'da global yazmaları `role = 'admin'` koşuluna bağladım ama **admin'in ne olduğunu
+tanımlamadım**. O güne kadar yönetici, kazara bir kiracıya ait bir kullanıcıydı: platformun
+küratörü, birinin kütüphanesinin üyesi olarak uydurulmak zorundaydı. Kiracıların önerilerini
+incelemek, iki kimliği birleştirmek, toplu veri yüklemek — bunların hiçbiri bir kuruma ait
+değil ve birine bağlanınca paylaşılan plane o kurumun malı gibi görünüyor.
+
+#### Karar
+
+`control.users.tenant_id` **nullable** oldu. Kiracısız hesap = platform yöneticisi.
+
+Kural **veritabanında**: `ck_users_tenant_required` →
+
+```sql
+tenant_id IS NOT NULL OR role = 'admin'
+```
+
+Okunuşu: kiracısız hesap yönetici olmak zorunda, çünkü kütüphanesiz bir kütüphaneci hiçbir
+şey yapamaz. Tersi **kasıtlı olarak açık** — bir kurumun kendi yöneticisi de paylaşılan
+kaydı kürate edebilir.
+
+`tenant_db` kiracısız hesabı **403** ile reddediyor, varsayılana düşmüyor. Burası kiracı
+değerinin geldiği tek yer; bir hesabı olmayan kullanıcıya bir kiracı *seçmek* — hangisi
+olursa olsun — tasarımın baştan beri engellemeye çalıştığı açığın ta kendisi olurdu.
+Platform yöneticisinin erişimi global plane, ve yalnızca global plane.
+
+#### Ve bu sırada ikinci gerçek hata: kalkanın muafiyeti hiç çalışmamış
+
+`control.guard_self_registration()` şöyle başlıyordu:
+
+```sql
+if not pg_has_role(current_user, 'libraryhub_global_app', 'MEMBER') then
+    return new;
+end if;
+```
+
+Yorumu da şuydu: *"Sadece uygulama rolleri kısıtlanır. Owner yönetim script'lerini
+çalıştırır ve istendiği her şeyi oluşturabilir."*
+
+**Bu yorum hiç doğru olmamış.** Owner bir süper kullanıcı ve **süper kullanıcı her rolün
+üyesidir** — `pg_has_role('library', 'libraryhub_global_app', 'MEMBER')` true döner. Yani
+kalkan owner'ı muaf tutmadı; tam tersine **yalnızca owner'ı kısıtladı**.
+
+Sonuç: `create_user.py` kalkan eklendiğinden beri **hiçbir hesap açamamış**. Script
+`email_verified_at` yazıyor, kalkan da kısıtlanmış çağırana bunu yasaklıyor. Fark
+edilmemesinin sebebi, mevcut hesapların kalkan'dan önce açılmış olması ve yönetici rolünün
+hiç kullanılmamış olması — yani kimse o yolu denememiş.
+
+Düzeltme `rolsuper` testi. Kalkanın gerçekten koruduğu roller için hiçbir şey gevşemiyor:
+uygulama rolü asla süper kullanıcı değil. Owner da zaten `control.users`'ı doğrudan
+yazabilen kimlik bilgisine sahip — kalkan, **çalınmış bir uygulama oturumunun** hesap
+açmasını engellemek için var.
+
+**Yan bulgu:** `create_user.py --list` `join control.tenants` kullanıyordu, yani kiracısı
+olmayan hesabı — tam da bulunması en zor olanı — hiç göstermezdi. `left join` oldu.
+
+Ders: bir güvenlik kalkanının "muaf" dalı, muaf tuttuğunu iddia ettiği hesabı test
+etmiyorsa, o dal çalışmıyor olabilir — ve kimse fark etmez, çünkü kalkan hata vermez,
+sadece yanlış tarafı kısıtlar.
+
+#### Kullanım
+
+```
+python create_user.py --platform --email ... --name ...
+python create_user.py --email ... --name ... --tenant <slug> --role librarian
+python create_user.py --list
+```
+
+`--platform` rolü `admin`e sabitler ve `--tenant` ile birlikte kullanılamaz. Geliştirme
+ortamındaki platform hesabı: `platform@libraryhub.local` / `platform-dev-parola`.
+
+#### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| Test paketi | **91/91** (3 yeni: kiracısız giriş, tenant plane'de 403, kısıt) |
+| Senaryo kontrolleri | **28/28** |
+| `alembic check` | temiz, tek head `f5b2c8d36a94` |
+| Veri | `works=316 entities=479 items=849` — değişmedi |
+| Platform yöneticisi ile `POST /works` | 201 |
+| Platform yöneticisi ile `/tenant/*` | 403, açıklayıcı mesajla |
+| Kiracısız `librarian` | `ck_users_tenant_required` reddetti |
+| `create_user.py` librarian akışı | çalışıyor (kalkan düzeltmesiyle) |
+
+---
+
 ## 1. Plane modeli
 
 ### 1.1 Üç plane, iki kesişen katman
