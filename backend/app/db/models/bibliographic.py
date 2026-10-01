@@ -137,6 +137,25 @@ class Expression(Base):
 class Manifestation(Base):
     __tablename__ = "manifestations"
 
+    __table_args__ = (
+        CheckConstraint(
+            "publication_status IN ('announced', 'in_press', 'published', "
+            "'out_of_print', 'cancelled')",
+            name="ck_manifestations_publication_status",
+        ),
+        # Declared so `alembic check` stops proposing to drop it. The migration
+        # creates it; a partial index the model does not know about is an index
+        # the next autogenerate deletes.
+        Index(
+            "ix_manifestations_not_yet_published",
+            "publication_status",
+            "publication_date",
+            postgresql_where=text(
+                "publication_status in ('announced', 'in_press')"
+            ),
+        ).ddl_if(dialect="postgresql"),
+    )
+
     entity_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("entities.id", ondelete="CASCADE"),
         primary_key=True,
@@ -170,6 +189,20 @@ class Manifestation(Base):
     notes: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
+    )
+
+    # Whether the book exists yet. Defaults to `published` because every row that
+    # existed before this column meant exactly that, and `publication_date` cannot
+    # express the difference: "announced" is a status, not a date.
+    #
+    # `server_default` is a plain string, so the SQLite test engine accepts it --
+    # unlike the PostgreSQL-only expressions that broke `outbox_events`. Raw SQL
+    # writes do not run Python-side defaults.
+    publication_status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="published",
+        server_default="published",
     )
 
 
