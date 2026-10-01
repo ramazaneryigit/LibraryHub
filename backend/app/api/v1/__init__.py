@@ -13,6 +13,7 @@ from fastapi import APIRouter
 
 from .routes import (
     admin,
+    assertions,
     auth,
     classifications,
     collective_agents,
@@ -40,6 +41,7 @@ api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(admin.router)
 api_router.include_router(tenant.router)
+api_router.include_router(assertions.router)
 api_router.include_router(works.router)
 api_router.include_router(work_agents.router)
 api_router.include_router(persons.router)

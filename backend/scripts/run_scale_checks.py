@@ -72,6 +72,119 @@ def check_rls_isolation(owner, app) -> None:
     )
 
 
+def check_assertion_provenance(owner, app) -> None:
+    """A claim can only be filed as its own source, and only a curator decides.
+
+    The point of the provenance spine is that these two rules hold even if the
+    application forgets them, so the check attacks the rules directly rather than
+    going through the endpoints that already obey them.
+
+    Everything happens inside a transaction that is rolled back, so the queue is
+    left as it was found.
+    """
+
+    work_id = owner.execute(
+        text("select entity_id from public.works order by canonical_title limit 1")
+    ).scalar()
+
+    sources = owner.execute(
+        text(
+            "select id, code from public.source_systems "
+            "where code like 'tenant:%' order by code limit 2"
+        )
+    ).all()
+
+    if work_id is None or len(sources) < 2:
+        record(
+            "Beyan kaynagi sahtekarligi reddediliyor",
+            True,
+            "denenecek iki kaynak yok; atlandi",
+        )
+        return
+
+    mine, theirs = sources[0][0], sources[1][0]
+
+    def attempt(source_id) -> str:
+        """Try to file a claim; report the refusal.
+
+        Each attempt gets its own savepoint. A rejected insert does not merely
+        raise -- it aborts the surrounding transaction, and every later statement
+        then fails with "current transaction is aborted", which would look like
+        the second rule working when in fact nothing was tested.
+        """
+
+        nested = app.begin_nested()
+
+        try:
+            app.execute(
+                text(
+                    "insert into public.field_assertions "
+                    "(id, entity_id, entity_type, field, value, source_system_id, "
+                    " asserted_at, status) "
+                    "values (gen_random_uuid(), :entity_id, 'WORK', "
+                    "        'canonical_title', to_jsonb('sinama'::text), "
+                    "        :source_id, now(), 'proposed')"
+                ),
+                {"entity_id": work_id, "source_id": source_id},
+            )
+
+            nested.commit()
+
+            return "kabul edildi"
+
+        except Exception as error:  # noqa: BLE001 - the refusal is the evidence
+            nested.rollback()
+
+            return type(error).__name__
+
+    try:
+        # 1. No source bound at all.
+        app.execute(text("select set_config('libraryhub.source_system_id', '', true)"))
+        unbound = attempt(mine)
+
+        # 2. Bound as one source, claiming to be another.
+        app.execute(
+            text("select set_config(:n, :v, true)"),
+            {"n": "libraryhub.source_system_id", "v": str(mine)},
+        )
+        forgery = attempt(theirs)
+
+        # 3. A source may file its own claim...
+        own = attempt(mine)
+
+        # ...but may not approve it.
+        nested = app.begin_nested()
+
+        try:
+            app.execute(
+                text(
+                    "update public.field_assertions set status = 'accepted' "
+                    "where source_system_id = :source_id"
+                ),
+                {"source_id": mine},
+            )
+            nested.commit()
+            self_approval = "kabul edildi"
+        except Exception as error:  # noqa: BLE001
+            nested.rollback()
+            self_approval = type(error).__name__
+
+        record(
+            "Beyan kaynagi sahtekarligi reddediliyor",
+            unbound != "kabul edildi"
+            and forgery != "kabul edildi"
+            and own == "kabul edildi"
+            and self_approval != "kabul edildi",
+            f"baglanmamis oturum={unbound}, "
+            f"baskasi adina={forgery}, "
+            f"kendi beyani={own}, "
+            f"kendi kendini onaylama={self_approval}",
+        )
+
+    finally:
+        app.rollback()
+
+
 def check_rls_fail_closed(app) -> None:
     app.execute(
         text("select set_config(:n, :v, false)"),
@@ -1526,6 +1639,9 @@ def main() -> int:
 
         print("\n-- olcek --")
         check_partitioning_threshold(owner)
+
+        print("\n-- provenance --")
+        check_assertion_provenance(owner, app)
 
         print("\n-- outbox --")
         check_outbox_same_transaction(owner)
