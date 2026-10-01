@@ -955,6 +955,10 @@ EXCUSED_FROM_OUTBOX = {
     # watching the claim too would emit an event for a change that has not
     # happened yet.
     "field_assertions": "metadata about a record, not the record",
+    # A queue of suggestions, not a fact about a record. Nothing derives from a row
+    # here; accepting one causes a merge, and the merge is the write that matters
+    # and is watched.
+    "authority_candidates": "a review queue; the merge it causes is watched",
     "entities": "the registry; its subtypes carry the events",
     "source_systems": "ingestion input, not the catalogue",
     "source_records": "ingestion input, not the catalogue",

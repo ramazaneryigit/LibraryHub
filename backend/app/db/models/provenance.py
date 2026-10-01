@@ -33,7 +33,87 @@ from sqlalchemy.types import JSON, Uuid
 from ..base import Base
 from ...core.ids import uuid7
 
-__all__ = ["FieldAssertion"]
+__all__ = ["AuthorityCandidate", "FieldAssertion"]
+
+
+class AuthorityCandidate(Base):
+    """Two names that look alike, waiting for somebody to say whether they are.
+
+    `authority.suggest` refuses to merge on a spelling resemblance, and that rule
+    only works if the resemblance has somewhere to go. This is that place: nothing
+    in the catalogue changes, a row appears, and a person decides.
+
+    Strong evidence never lands here -- it is acted on immediately -- so a row in
+    this table always means "a person is needed", which is what makes the queue
+    worth reading.
+    """
+
+    __tablename__ = "authority_candidates"
+
+    __table_args__ = (
+        # Both are partial, and both are declared here as well as in the migration:
+        # an index the model does not know about is one the next autogenerate
+        # proposes to drop.
+        Index(
+            "uq_authority_candidates_open",
+            text("lower(incoming_name)"),
+            "candidate_entity_id",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+        ).ddl_if(dialect="postgresql"),
+        Index(
+            "ix_authority_candidates_open",
+            "status",
+            text("score DESC"),
+            postgresql_where=text("status = 'open'"),
+        ).ddl_if(dialect="postgresql"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid7,
+    )
+
+    entity_type: Mapped[str] = mapped_column(Text, nullable=False)
+    incoming_name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Kept although nothing reads it yet: it is what the name folds to, and the
+    # next person to widen the matching will want it rather than re-deriving it.
+    incoming_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    candidate_entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"),
+        nullable=False,
+        type_=Uuid,
+    )
+
+    candidate_name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    score: Mapped[float] = mapped_column(REAL, nullable=False)
+    strength: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+
+    source_system_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("source_systems.id"),
+        nullable=True,
+        type_=Uuid,
+    )
+
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class FieldAssertion(Base):

@@ -182,6 +182,17 @@ class SuggestingTests(unittest.TestCase):
         self.assertTrue(found)
         self.assertTrue(all(candidate.strength == "weak" for candidate in found))
 
+    def test_an_identical_name_decides(self):
+        """Not proof in the abstract -- two people can share a name -- but it is
+        what the catalogue already keyed on, and treating it as merely similar
+        creates a duplicate record and then queues a 1.00 match to it."""
+
+        found = suggest("TTK Yayınları", [{"entity_id": "1", "name": "TTK Yayinlari"}])
+
+        self.assertEqual(found[0].entity_id, "1")
+        self.assertTrue(found[0].decides)
+        self.assertEqual(found[0].reason, "ayni ad")
+
     def test_a_candidate_knows_whether_it_decides(self):
         self.assertTrue(Candidate("1", "x", 1.0, "strong", "ayni ORCID").decides)
         self.assertFalse(Candidate("1", "x", 0.9, "weak", "benzer ad").decides)

@@ -283,6 +283,26 @@ def suggest(
             )
             continue
 
+        # An identical folded name decides.
+        #
+        # Two people can share a name, so this is not proof in the abstract -- but
+        # it is what the catalogue already keyed on, and treating it as merely
+        # similar *regressed*: a publisher that arrived twice, once as `TTK
+        # Yayinlari` and once as `TTK Yayınları`, produced a duplicate record and
+        # a queue entry saying the duplicate matched at 1.00. Being told that two
+        # identical names might be the same is not useful information.
+        if fold(name) == fold(other_name):
+            candidates.append(
+                Candidate(
+                    entity_id=str(entity_id) if entity_id else None,
+                    name=other_name,
+                    score=1.0,
+                    strength="strong",
+                    reason="ayni ad",
+                )
+            )
+            continue
+
         score = similarity(name, other_name)
 
         # The surname at character level, because token overlap cannot see that

@@ -36,6 +36,7 @@ from ..core.ids import uuid7
 from ..core.marc import MarcError, parse_records
 from ..core.marc_mapping import MappedRecord, map_record, normalize_library_code
 from ..core.text import normalize_text
+from . import authority_queue
 
 __all__ = ["ingest", "list_batches", "read_batch", "resolve_branch"]
 
@@ -100,20 +101,17 @@ def _agent_for(executor, name: str, agent_type: str) -> uuid.UUID:
     silently merging people.
     """
 
-    existing = executor.execute(
-        text(
-            "select ca.entity_id from public.collective_agents ca "
-            "where ca.canonical_name = :name "
-            "union all "
-            "select p.entity_id from public.persons p "
-            "where p.canonical_name = :name "
-            "limit 1"
-        ),
-        {"name": name},
-    ).scalar()
+    # Authority control. An existing record is used when something *decides*
+    # these are one person -- an ORCID, agreeing dates; a new one is created when
+    # nothing does, and the resemblance is recorded for a person to look at.
+    #
+    # The middle case is the one that matters: matching on the exact name turned
+    # forty spellings into forty people, and matching on resemblance alone would
+    # merge two real people. This does neither.
+    decided, _queued = authority_queue.resolve_agent(executor, name, agent_type)
 
-    if existing is not None:
-        return existing
+    if decided is not None:
+        return decided
 
     entity_id = uuid7()
     kind = "ORGANIZATION" if agent_type == "publisher" else "PERSON"
