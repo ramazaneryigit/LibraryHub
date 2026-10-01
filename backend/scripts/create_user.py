@@ -106,6 +106,22 @@ def main() -> int:
         choices=("institutional", "corporate"),
         help="override the account kind inferred from the domain",
     )
+    parser.add_argument(
+        "--principal-kind",
+        default=None,
+        choices=(
+            "platform",
+            "tenant_staff",
+            "academician",
+            "publisher",
+            "isbn_agency",
+            "vendor",
+        ),
+        help=(
+            "which participant this account is; inferred as 'tenant_staff' "
+            "when a tenant is given and 'platform' when --platform is used"
+        ),
+    )
     parser.add_argument("--password", help="omit to be prompted")
     parser.add_argument(
         "--platform",
@@ -134,13 +150,38 @@ def main() -> int:
         if missing:
             parser.error(f"gerekli: {', '.join(missing)} (veya --list)")
 
+        # The four participants who are not libraries -- an academician, a
+        # publisher, the ISBN agency, a vendor -- are tenant-less by nature but are
+        # not the platform either. Before this they could not be created at all,
+        # because a missing tenant meant a platform administrator.
+        #
+        # Stated once, and the older check that demanded `--platform` for every
+        # tenant-less account is gone: it was right when the platform was the only
+        # such participant, and it is what stops `--principal-kind isbn_agency`
+        # from working at all.
+        tenant_less_participant = bool(
+            args.principal_kind and args.principal_kind != "tenant_staff"
+        )
+
         if args.platform and args.tenant:
             parser.error(
                 "--platform ve --tenant birlikte kullanilamaz: platform hesabi "
                 "hicbir kutuphaneye bagli degildir"
             )
 
-        if not args.platform and not args.tenant:
+        if tenant_less_participant:
+            if args.platform:
+                parser.error(
+                    "--platform ile --principal-kind birlikte kullanilamaz: "
+                    "platform hesabi 'platform'dir"
+                )
+
+            if args.tenant:
+                parser.error(
+                    f"'{args.principal_kind}' bir kutuphaneye bagli degildir; "
+                    "--tenant vermeyin"
+                )
+        elif not args.platform and not args.tenant:
             parser.error("gerekli: --tenant (veya --platform)")
 
         role = args.role
@@ -215,17 +256,33 @@ def main() -> int:
 
         password_hash = hash_password(password)
 
+        # Which participant this account is. Until now every account was staff or
+        # the platform, so the constraint allowed the two by accident of a missing
+        # tenant; it is stated here so an ISBN agency account is not silently
+        # recorded as library staff, which is what the column default would do.
+        principal_kind = args.principal_kind
+
+        if principal_kind is None:
+            principal_kind = "platform" if args.platform else "tenant_staff"
+
+        if principal_kind != "tenant_staff" and args.tenant and not args.platform:
+            print(
+                f"  UYARI: '{principal_kind}' bir kutuphaneye bagli degil; "
+                "verilen --tenant principal_kind'i degistirmez."
+            )
+
         if existing is None:
             connection.execute(
                 text(
                     """
                     insert into control.users
                         (id, tenant_id, email, display_name, password_hash,
-                         role, account_kind, email_verified_at, is_active,
-                         created_at, updated_at)
+                         role, account_kind, principal_kind, email_verified_at,
+                         is_active, created_at, updated_at)
                     values
                         (:id, :tenant_id, :email, :name, :password_hash,
-                         :role, :account_kind, now(), true, now(), now())
+                         :role, :account_kind, :principal_kind, now(), true,
+                         now(), now())
                     """
                 ),
                 {
@@ -236,6 +293,7 @@ def main() -> int:
                     "password_hash": password_hash,
                     "role": role,
                     "account_kind": account_kind,
+                    "principal_kind": principal_kind,
                 },
             )
 
@@ -253,6 +311,7 @@ def main() -> int:
                         display_name = :name,
                         role = :role,
                         account_kind = :account_kind,
+                        principal_kind = :principal_kind,
                         is_active = true,
                         email_verified_at = coalesce(email_verified_at, now()),
                         updated_at = now()
@@ -265,6 +324,7 @@ def main() -> int:
                     "name": args.name,
                     "role": role,
                     "account_kind": account_kind,
+                    "principal_kind": principal_kind,
                 },
             )
 

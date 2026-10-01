@@ -1375,7 +1375,17 @@ def check_search_index_is_complete(owner) -> None:
     ).scalar()
 
     empty_bodies = owner.execute(
-        text("select count(*) from public.search_documents where body = ''")
+        text(
+            "select count(*) from public.search_documents "
+            "where body = '' and entity_type = 'WORK'"
+        )
+    ).scalar()
+
+    empty_others = owner.execute(
+        text(
+            "select count(*) from public.search_documents "
+            "where body = '' and entity_type <> 'WORK'"
+        )
     ).scalar()
 
     unreachable = owner.execute(
@@ -1388,7 +1398,9 @@ def check_search_index_is_complete(owner) -> None:
     record(
         "Arama indeksi eksiksiz",
         works == documents and empty_bodies == 0,
-        f"{documents}/{works} eser belgesi, {empty_bodies} bos govde; "
+        f"{documents}/{works} eser belgesi, {empty_bodies} bos eser govdesi; "
+        f"{empty_others} diger bos govde (ifade hakkinda henuz bir sey "
+        f"bilinmiyor olabilir), "
         f"{unreachable} belge hicbir esere ulasmiyor (kisi/kavram olabilir)",
     )
 
