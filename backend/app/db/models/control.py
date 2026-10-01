@@ -34,6 +34,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -337,12 +338,26 @@ class User(Base):
             "account_kind IN ('institutional', 'corporate')",
             name="ck_users_account_kind",
         ),
-        # Read as: a tenant-less account is a platform administrator. The other
-        # direction is deliberately open -- an institution's own administrator may
-        # also curate the shared record.
+        # Read as: only a library's own staff must belong to a library. An
+        # academician, a publisher, the ISBN agency or a vendor is tenant-less by
+        # nature.
+        #
+        # The `role = 'admin'` escape is a transition, not a design. Before this
+        # revision the rule was "a tenant-less account is an administrator", and
+        # every existing creation path -- and the tests -- rely on it. A
+        # tenant-less administrator should be `principal_kind = 'platform'`, and
+        # a constraint cannot infer that from a missing value, so the honest move
+        # is to keep accepting the old shape while the creation paths are
+        # corrected, rather than to relax it silently or break them.
         CheckConstraint(
-            "tenant_id IS NOT NULL OR role = 'admin'",
+            "tenant_id IS NOT NULL OR principal_kind <> 'tenant_staff' "
+            "OR role = 'admin'",
             name="ck_users_tenant_required",
+        ),
+        CheckConstraint(
+            "principal_kind IN ('platform', 'tenant_staff', 'academician', "
+            "'publisher', 'isbn_agency', 'vendor')",
+            name="ck_users_principal_kind",
         ),
         UniqueConstraint("email", name="uq_users_email"),
         Index("ix_users_tenant_id", "tenant_id"),
@@ -391,6 +406,23 @@ class User(Base):
         String(30),
         nullable=False,
         default="institutional",
+    )
+
+    # Which of the five participants this account is. `role` says what a person
+    # may do *inside* a library; `principal_kind` says what kind of participant
+    # they are at all, and therefore whether they belong to a library.
+    #
+    # The platform is the only one that exists today; the other four are declared
+    # so the identity model stops forbidding them, and they gain workspaces in a
+    # later step. See docs/merkezi-yapi-plani.md §3.
+    principal_kind: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="tenant_staff",
+        # A plain string, so SQLite accepts it too -- unlike the PostgreSQL-only
+        # expressions that broke `outbox_events`. Raw SQL inserts do not run
+        # Python-side defaults, and the tests create accounts that way.
+        server_default="tenant_staff",
     )
 
     # NULL means the address has never been shown to receive mail, and such an

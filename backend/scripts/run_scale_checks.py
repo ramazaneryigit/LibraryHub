@@ -837,6 +837,11 @@ EXCUSED_FROM_OUTBOX = {
     # The index is derived, and watching it would loop: indexing writes
     # documents, which would raise events, which would index again.
     "search_documents": "derived; watching it would loop",
+    # An assertion is metadata about a record, not the record. Accepting one
+    # changes the canonical field, and *that* write is already watched -- so
+    # watching the claim too would emit an event for a change that has not
+    # happened yet.
+    "field_assertions": "metadata about a record, not the record",
     "entities": "the registry; its subtypes carry the events",
     "source_systems": "ingestion input, not the catalogue",
     "source_records": "ingestion input, not the catalogue",

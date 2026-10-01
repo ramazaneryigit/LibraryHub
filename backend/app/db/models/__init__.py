@@ -32,6 +32,7 @@ from .classifications import *  # noqa: F401,F403
 from .control import *  # noqa: F401,F403
 from .ingestion import *  # noqa: F401,F403
 from .outbox import *  # noqa: F401,F403
+from .provenance import *  # noqa: F401,F403
 from .reconciliation import *  # noqa: F401,F403
 from .relations import *  # noqa: F401,F403
 from .search import *  # noqa: F401,F403
