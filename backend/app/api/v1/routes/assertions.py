@@ -168,7 +168,10 @@ def _decide(
     assertions.bind_curator(db)
 
     row = db.execute(
-        text("select id, status from public.field_assertions where id = :id"),
+        text(
+            "select id, status, entity_type, field, value "
+            "from public.field_assertions where id = :id"
+        ),
         {"id": assertion_id},
     ).mappings().first()
 
@@ -184,17 +187,41 @@ def _decide(
             detail=f"This assertion has already been {row['status']}",
         )
 
+    if decision == "accepted":
+        # Accepting writes the value onto the shared record, so the answer says
+        # what actually happened to the catalogue -- not merely that a row changed
+        # status. A claim about a column nobody opened returns a reason and
+        # changes nothing, which is a different outcome from a refusal.
+        result = assertions.accept_and_apply(
+            db,
+            assertion_id,
+            reviewed_by=user.id,
+            note=payload.note,
+        )
+
+        db.commit()
+
+        applied = sorted((result.applied or {}).keys()) if result else []
+
+        return {
+            "id": assertion_id,
+            "status": "accepted",
+            "applied": applied,
+            "dropped": list(result.dropped) if result else [],
+            "note": None if applied else (result.reason if result else None),
+        }
+
     assertions.decide(
         db,
         assertion_id,
-        status=decision,
+        status="rejected",
         reviewed_by=user.id,
         note=payload.note,
     )
 
     db.commit()
 
-    return {"id": assertion_id, "status": decision}
+    return {"id": assertion_id, "status": "rejected", "applied": []}
 
 
 @router.post("/admin/assertions/{assertion_id}/accept")

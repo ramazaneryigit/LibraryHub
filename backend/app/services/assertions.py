@@ -22,6 +22,7 @@ from sqlalchemy.sql import TextClause
 from sqlalchemy.types import Uuid
 
 __all__ = [
+    "accept_and_apply",
     "account_source",
     "bind_curator",
     "bind_source",
@@ -160,6 +161,60 @@ def decide(
             "note": note,
         },
     )
+
+
+def accept_and_apply(
+    executor,
+    assertion_id,
+    *,
+    reviewed_by,
+    note: str | None = None,
+):
+    """Accept a claim and write its value onto the shared record.
+
+    Accepting is not a status change; it is an edit to the catalogue. So this is
+    the point where a claim becomes a fact, and it goes through exactly the write
+    path the proposal queue uses -- `proposal_review.apply_fields` -- rather than a
+    second one. The whitelist in `APPLICABLE_FIELDS` decides what a claim may
+    touch: an assertion about a column nobody agreed to open is refused there,
+    with a reason, instead of being written because a curator clicked once.
+
+    A refusal is not an error. A claim can be accepted as a true statement about
+    the world while touching nothing -- and the caller is told which happened.
+    """
+
+    # Imported here rather than at module load: `proposal_review` reads the same
+    # models and the same text helpers, and a cycle would make the import order
+    # matter for no benefit.
+    from .proposal_review import apply_fields
+
+    row = executor.execute(
+        text(
+            "select id, entity_id, entity_type, field, value, status "
+            "from public.field_assertions where id = :id"
+        ),
+        {"id": assertion_id},
+    ).mappings().first()
+
+    if row is None:
+        return None
+
+    result = apply_fields(
+        executor,
+        row["entity_id"],
+        row["entity_type"],
+        [{"field": row["field"], "proposed": row["value"]}],
+    )
+
+    decide(
+        executor,
+        assertion_id,
+        status="accepted",
+        reviewed_by=reviewed_by,
+        note=note,
+    )
+
+    return result
 
 
 def list_assertions(

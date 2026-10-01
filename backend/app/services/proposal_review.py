@@ -310,12 +310,6 @@ def apply_proposal(executor, proposal: Mapping) -> ApplyResult:
         return ApplyResult(reason=f"{target_id} diye bir entity yok.")
 
     kind = entity_type.lower()
-    allowed = APPLICABLE_FIELDS.get(kind)
-
-    if allowed is None:
-        return ApplyResult(
-            reason=f"'{kind}' tipi için uygulanabilir alan tanımlı değil."
-        )
 
     # A proposal carries what the tenant *believes* the target is; the registry is
     # what it actually is. A disagreement is worth stopping for.
@@ -324,10 +318,62 @@ def apply_proposal(executor, proposal: Mapping) -> ApplyResult:
     if claimed and claimed != kind:
         return ApplyResult(reason=f"Öneri '{claimed}' diyor, kayıt '{kind}'.")
 
+    result = apply_fields(
+        executor,
+        target_id,
+        entity_type,
+        as_changes(proposal["field_changes"]),
+    )
+
+    if result.applied is None:
+        return result
+
+    executor.execute(
+        _typed(
+            "update tenant.change_proposals "
+            "set status = 'applied', applied_at = CURRENT_TIMESTAMP, "
+            "applied_fields = :applied, updated_at = CURRENT_TIMESTAMP "
+            "where id = :id",
+            "id",
+        ),
+        {
+            "id": _as_uuid(proposal["id"]),
+            "applied": json.dumps(sorted(result.applied)),
+        },
+    )
+
+    return result
+
+
+def apply_fields(
+    executor,
+    entity_id,
+    entity_type: str | None,
+    changes: list,
+) -> ApplyResult:
+    """Write whitelisted fields onto one record.
+
+    Shared by the proposal review path and the assertion path. `changes` is the
+    shape both produce: a list of `{"field": ..., "proposed": ...}`.
+
+    The whitelist is the point. A curator approving a claim is not a licence to
+    write any column anybody names -- `APPLICABLE_FIELDS` decides what a decision
+    may touch, and a field outside it is dropped and reported rather than
+    silently ignored.
+    """
+
+    kind = (entity_type or "").lower()
+    allowed = APPLICABLE_FIELDS.get(kind)
+
+    if allowed is None:
+        return ApplyResult(
+            reason=f"'{kind}' tipi için uygulanabilir alan tanımlı değil."
+        )
+
     assignments: dict = {}
     dropped: list = []
 
-    for change in as_changes(proposal["field_changes"]):
+    for change in changes:
         name = change.get("field")
 
         if name in allowed["fields"]:
@@ -363,21 +409,9 @@ def apply_proposal(executor, proposal: Mapping) -> ApplyResult:
             f"where {allowed['key']} = :target_id",
             "target_id",
         ),
-        {**assignments, "target_id": target_id},
+        {**assignments, "target_id": _as_uuid(entity_id)},
     )
 
-    executor.execute(
-        _typed(
-            "update tenant.change_proposals "
-            "set status = 'applied', applied_at = CURRENT_TIMESTAMP, "
-            "applied_fields = :applied, updated_at = CURRENT_TIMESTAMP "
-            "where id = :id",
-            "id",
-        ),
-        {
-            "id": _as_uuid(proposal["id"]),
-            "applied": json.dumps(sorted(assignments)),
-        },
-    )
-
+    # The values, not a set of names: `ApplyResult.applied` has always carried
+    # what was written, and callers read it.
     return ApplyResult(applied=assignments, dropped=dropped)
