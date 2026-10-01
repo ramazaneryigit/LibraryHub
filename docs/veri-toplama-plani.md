@@ -192,7 +192,88 @@ Ama hangisi olursa olsun **robots.txt'e uyulur** ve veri **protokolle** alınır
 
 ---
 
-## 8. Bugün yapılabilecek en küçük gerçek adım
+## 9. MARC nereden alınır — kaynak kaynak
+
+MARC bir **dosya biçimidir**, bir site değil. Onu elinde tutan taraf onu verebilir.
+Beş gerçek kaynak var ve **hiçbiri kazıma gerektirmiyor.**
+
+### 9.1 Kütüphanenin kendi sistemi — **birinci yol**
+
+Her Türk üniversite kütüphanesi bir ILS çalıştırır: Yordam, Koha, Sierra, Alma,
+Milennium, IDEA, Milas, NetKütüphane. **Hepsi MARC dışa aktarır** — çünkü MARC o
+sistemlerin çekirdek veri biçimidir, süs değil.
+
+| Biçim | Ne | Nerede |
+|---|---|---|
+| `.mrc` | **ISO 2709** ikili MARC21 | Tek dosya, tüm koleksiyon |
+| MARCXML | Aynı veri, XML | Tek dosya, okunması kolay |
+
+**İzin sorunu yok**: veri kütüphanenin kendisinin ✓. Yapılacak şey istemek ✓.
+
+Bu, **1000 kütüphanenin katılım yoludur** ✓ ve ilk uygulanacak şey budur ✓:
+kütüphaneci `.mrc` dosyasını yükler, platform ayrıştırır.
+
+### 9.2 Z39.50 ve SRU — canlı kopya kataloglama
+
+Kütüphanecilerin hâlihazırda kullandığı yöntem: kaydı **yazmak yerine çekmek** ✓.
+Türkiye'deki birçok üniversite kütüphanesi bir Z39.50 hedefi yayınlar.
+
+**SRU önce**, çünkü HTTP üzerinden çalışır ✓; Z39.50 ikili bir protokoldür ✗ ve
+uygulaması kat kat pahalıdır ✗.
+
+### 9.3 Açık kaynaklar — izin gerekmez
+
+| Kaynak | Ne verir | Biçim |
+|---|---|---|
+| **OpenLibrary** | Toplu dumps | MARC + JSON, ücretsiz |
+| **Library of Congress** | SRU + toplu indirme | MARC21 |
+| **DNB** (Alman Millî Kütüphanesi) | Toplu dumps | MARC21, ücretsiz |
+| **BnF** (Fransız Millî Kütüphanesi) | SRU | MARC |
+| **K10plus / GBV** | SRU + dumps | MARC21 |
+| **OpenAlex / Crossref** | DOI, künye, atıf | JSON (MARC değil) |
+
+Bunlar **zenginleştirme** içindir ✓ — bir Türkçe eserin künyesini tamamlamak ✓ —
+ama bir kütüphanenin koleksiyonunu temsil etmez ✗.
+
+**OCLC WorldCat ve SkyRiver hariç** ✗: ikisi de lisanslı ve ücretli ✗.
+
+### 9.4 Sağlayıcılar — **KBART**, MARC değil
+
+Veritabanı şirketlerinin standardı **KBART**'tır ✓ (Knowledge Bases and Related
+Tools ✓): hangi e-dergi, hangi yıl aralığı, hangi URL ✓. MARC'tan farklı bir şey
+ve **doğru olan o** ✓ — bir e-dergi koleksiyonunu MARC olarak modellemek yanlış
+olurdu ✓.
+
+### 9.5 Kurumsal anlaşmalar
+
+| Kurum | Ne |
+|---|---|
+| **ANKOS** | Anadolu Üniversite Kütüphaneleri Konsorsiyumu — **doğru muhatap** ✓ |
+| **ÜNAK** | Üniversite ve Araştırma Kütüphanecileri Derneği |
+| **Kültür ve Turizm Bakanlığı** | TO-KAT'ın sahibi |
+| **ISBN Ajansı** | Basılmamış yayın verisi |
+
+TO-KAT için yol **anlaşmadır**, kazıma değil ✓ (§7).
+
+---
+
+## 10. Uygulanacak sıra — MARC tarafı
+
+1. **`.mrc` ayrıştırıcı** (ISO 2709) — ikili biçim, ~200 satır, kütüphane yok
+2. **MARCXML ayrıştırıcı** — aynı veri, `lxml` ile
+3. **`ingestion` ucuna yükleme** — `source_records`'a ham yaz, `ingestion_batches`'e
+   koşuyu kaydet
+4. **Eşleme** — 245→Work, 100/700→kişi, 264→Manifestation, 020→ISBN,
+   **852→Holding**, **876/877→Item**
+5. **Rapor** — kaç kayıt alındı, kaçı eşleşti, kaçı reddedildi **ve neden**
+
+Beşinci adım atlanamaz ✓: 500.000 kayıtlık bir dosyada "42.318 kayıt işlendi"
+demek yeterli değildir; hangi alan eşleşmedi bilinmeden veri **yarım** kalır ve
+yarım olduğu görünmez ✗.
+
+---
+
+## 11. Bugün yapılabilecek en küçük gerçek adım
 
 **Elimizdeki Yordam dosyası bunun için kullanılamaz** — ölçüldü: 33,84 MB'ta şema
 adları açıkta değil, sıkıştırılmış/kapalı ✗.
