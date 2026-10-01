@@ -136,3 +136,59 @@ belirler ✓.
 
 **Yani cevap: RDA uygulanabilir, hatta bu projenin en güçlü olduğu yer; ve MARC
 dışa aktarma onu bugün de besleyebilir, yarın da genişletebilir.**
+
+---
+
+## 8. Gerçek bir kayıt bunu doğruladı
+
+Bir üniversite kütüphanesinden gelen gerçek bir MARC kaydı
+(`Reklamcılık ve manipülasyon`, Çetinkaya, Ağaç Yayıncılık, 1993) hattan
+geçirildi ✓. **Tek kayıt, ama RDA kaydı** ✓:
+
+```
+040    $aTVK $btur $erda $cTVK          ← RDA işareti ✓
+336    $atext $2rdacontent             ← içerik türü ✓
+337    $aunmediated $2rdamedia         ← ortam türü ✓
+338    $avolume $2rdacarrier           ← taşıyıcı türü ✓
+050 00 $aHF 5823 $bC48 1993            ← yer numarası ✓
+250    $a2. Baskı                      ← baskı ✓
+504    $aKaynakça vardır.              ← not ✓
+300    $a135 sayfa : $bresim ; $c18 cm. ← fiziksel tanım ✓
+```
+
+**Hattın okuduğu** ✓: başlık ✓, yazar (inverted ✓), ISBN ✓, dil (`041`'den ✓),
+yayın yeri/yayıncı/yıl ✓, konular ✓, yer numarası (`050`'den ✓).
+
+**Hattın okumadığı — ve bu belgenin öngördüğü tam liste** ✗:
+
+| Alan | Değer | Durum |
+|---|---|---|
+| `336/337/338` | `text` / `unmediated` / `volume` | **kolonlar yok** ✗ (§3, madde 1) |
+| `040$e` | `rda` | okunmuyor ✗ (§3, madde 2) |
+| `300` | `135 sayfa` | **`extent` kolonu var** ✓ ama eşlenmiyor ✗ |
+| `504` | `Kaynakça vardır.` | **`notes` kolonu var** ✓ ama eşlenmiyor ✗ |
+
+**Yani belgedeki "eksik" listesi tahmin değildi** ✓ — gerçek bir kayıtta
+**dört maddesi birden** görünüyor ✓.
+
+**Ve iki şey daha öğrendi:**
+
+1. **Yerel alanlar var** ✓ (`907` = `PROF. DR. RECEP TAYFUN` ✓, `596` = nüsha
+   sayısı ✓). Bunlar **paylaşılan kayda yazılmamalı** ✗ — bir kütüphanenin kendi
+   notudur ✓ → **holding düzeyine** aittir ✓.
+2. **Kaynak veride hata var**: `650 0 $aAdvertisiing.` ✗ ("Advertising" ✓).
+   Gerçek veri **temiz değil** ✓ ve bu, provenance'ın (§6) neden gerekli olduğunun
+   kanıtı ✓.
+
+---
+
+## 9. Bu kaydın söylediği sıra
+
+| # | İş | Neden şimdi |
+|---|---|---|
+| **1** | `300` → `extent`, `504` → `notes` eşlemesi | **Kolonlar zaten var** ✓, sadece eşlenmiyor ✗ |
+| **2** | `336/337/338` kolonları + eşleme | RDA'nın ilk gerçek adımı ✓ |
+| **3** | `040$e` → RDA işareti | |
+| **4** | `9xx` yerel alanlar → **holding notu** | Paylaşılan kayda **değil** ✗ |
+
+**1 numara neredeyse bedava** ✓: iki kolon var ✓, iki satır eşleme eksik ✗.
