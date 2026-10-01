@@ -104,6 +104,8 @@ class MappedRecord:
     carrier_type: str | None = None
     subjects: list[str] = dataclass_field(default_factory=list)
     call_number: str | None = None
+    extent: str | None = None
+    notes: str | None = None
     library_code: NormalizedCode | None = None
     items: list[ItemRef] = dataclass_field(default_factory=list)
     problems: list[str] = dataclass_field(default_factory=list)
@@ -382,6 +384,36 @@ def map_record(record: Record) -> MappedRecord:
     mapped.publication_place, mapped.publisher, mapped.publication_date = (
         _publication(record)
     )
+
+    # `300` is the physical description -- "135 sayfa : resim ; 18 cm." -- and
+    # `504` a bibliography note. Both were unread until a real record from a
+    # university library arrived carrying them, and both had columns waiting:
+    # `extent` and `notes`.
+    extent = record.first("300")
+
+    if extent:
+        parts = [
+            _clean(extent.get("a")),
+            _clean(extent.get("b")),
+            _clean(extent.get("c")),
+        ]
+
+        joined = " ".join(part for part in parts if part)
+
+        if joined:
+            mapped.extent = joined
+
+    notes = []
+
+    for tag in ("504", "500", "502", "505"):
+        for entry in record.everything(tag):
+            text = _clean(entry.get("a"))
+
+            if text:
+                notes.append(text)
+
+    if notes:
+        mapped.notes = " | ".join(notes)
 
     carrier = _first(record, "338", "a") or _first(record, "337", "a")
 
