@@ -215,7 +215,12 @@ def main() -> int:
 
         tenant_id = None
 
-        if not args.platform:
+        # A participant who is not a library -- a publisher, an academician, the
+        # ISBN agency, a vendor -- has no tenant, and is not the platform either.
+        # Without this the lookup below runs with `--tenant` unset, finds nothing,
+        # prints the list of tenants that do exist and creates no account at all,
+        # which is what it did every time this was attempted.
+        if not args.platform and not tenant_less_participant:
             tenant_id = connection.execute(
                 text("select id from control.tenants where slug = :slug"),
                 {"slug": args.tenant},
@@ -233,7 +238,14 @@ def main() -> int:
                     print(f"  {slug:48} {name}")
                 return 1
 
-        target = "(platform)" if args.platform else args.tenant
+        # `principal_kind` is computed further down, next to the insert; this only
+        # needs a label for the confirmation line, and reaching for the variable
+        # before it exists is what raised UnboundLocalError here.
+        target = (
+            "(platform)"
+            if args.platform
+            else (args.tenant or args.principal_kind or "katilimci")
+        )
 
         password = args.password
 
@@ -266,9 +278,20 @@ def main() -> int:
             principal_kind = "platform" if args.platform else "tenant_staff"
 
         if principal_kind != "tenant_staff" and args.tenant and not args.platform:
-            print(
-                f"  UYARI: '{principal_kind}' bir kutuphaneye bagli degil; "
-                "verilen --tenant principal_kind'i degistirmez."
+            parser.error(
+                f"'{principal_kind}' bir kutuphaneye bagli degildir; "
+                "--tenant vermeyin"
+            )
+
+        # `role` says what somebody may do *inside* a library, and a publisher or
+        # an academician is not inside one. The database refuses the combination
+        # as well; refusing it here means the operator gets a sentence instead of
+        # a constraint violation.
+        if principal_kind not in ("tenant_staff", "platform") and role == "admin":
+            parser.error(
+                f"'{principal_kind}' hesabi 'admin' olamaz: rol, bir kutuphane "
+                "icinde ne yapilabilecegini soyler ve bu hesap bir kutuphanenin "
+                "icinde degil. --role viewer veya librarian kullanin."
             )
 
         if existing is None:
