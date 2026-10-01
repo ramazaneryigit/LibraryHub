@@ -140,7 +140,59 @@ Scrapy'yi başa almak, veriyi açılamayan ekranların arkasında biriktirmek ol
 
 ---
 
-## 6. Bugün yapılabilecek en küçük gerçek adım
+## 7. TO-KAT — ölçüldü, ve cevap net
+
+`https://toplukatalog.tr/robots.txt`:
+
+```
+User-agent: *
+Disallow: /
+```
+
+**Tüm otomatik erişim yasak.** İstisnasız, makine tarafından okunabilir biçimde,
+ve kullanıcı aracısı ayrımı yapmadan. Bu, planın 3.3'teki birinci kuralının ilk
+sınavı ve cevap **hayır**: kazımayız.
+
+Bu bir teknik ayrıntı değil. Site, otomatik istemcilere "gelmeyin" diyor; bunu
+aşmak için yol aramak, kendi yazdığımız politikayı ilk fırsatta çiğnemek olurdu.
+
+### Doğru yol: protokol, kazıma değil
+
+TO-KAT bir kamu kurumunun (Kültür ve Turizm Bakanlığı) hizmetidir. Veri paylaşımı
+için **anlaşma** yolu vardır ve o yoldan:
+- bir **OAI-PMH** uç noktası,
+- bir **SRU / Z39.50** hedefi,
+- ya da toplu **MARC** dışa aktarımı
+
+istenebilir. Bunlar zaten var olabilir de olmayabilir de — **bilmiyoruz**, ve
+öğrenmenin yolu robots.txt'i aşmak değil, sormaktır.
+
+### Ama asıl soru bu değil
+
+**TO-KAT zaten Türkiye'nin toplu katalogudur.** Kullanıcının başlangıçtaki hedefi
+"1000 kütüphanenin toplu kataloğu" idi ve **o şey halihazırda var.**
+
+Yani bu platformun değeri "bir toplu katalog daha" olamaz ✗. Olabileceği şey,
+TO-KAT'ın **yapmadığı** katmandır:
+
+| TO-KAT | Bu platform |
+|---|---|
+| Holding düzeyi ("hangi kütüphanede var") | **Nüsha düzeyi** (barkod, raf, durum) |
+| Arama arayüzü | **Beş paydaş için çalışma alanı** |
+| — | **Yayınevi**: "kitabım hangi kütüphanelerde" |
+| — | **Akademisyen**: ORCID'e bağlı profil |
+| — | **ISBN ajansı**: basılmamış yayın akışı |
+| — | **Sağlayıcı**: elektronik üsü veri + erişim linki |
+| — | **Provenance**: hangi alanı kim iddia etti |
+| Künye kopyalama | **Manifestation / Holding / Item ayrımı** |
+
+**Karar sizin:** ya bu farklılaşma üstüne gidilir, ya TO-KAT ile entegrasyon
+hedeflenir (o zaman bu platform bir *üst katman* olur), ya da ikisi birden.
+Ama hangisi olursa olsun **robots.txt'e uyulur** ve veri **protokolle** alınır.
+
+---
+
+## 8. Bugün yapılabilecek en küçük gerçek adım
 
 **Elimizdeki Yordam dosyası bunun için kullanılamaz** — ölçüldü: 33,84 MB'ta şema
 adları açıkta değil, sıkıştırılmış/kapalı ✗.
