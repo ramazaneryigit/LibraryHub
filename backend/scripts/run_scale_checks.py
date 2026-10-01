@@ -1549,6 +1549,40 @@ def check_partitioning_threshold(owner) -> None:
     )
 
 
+def check_outbox_is_being_drained(owner) -> None:
+    """Is the catalogue current, or is the index drifting behind?
+
+    The worker logs its lag every pass, but a log is read by whoever happens to be
+    looking. This is the same number asserted, so "the search index is a few
+    seconds behind" is a fact the checks know rather than a belief.
+
+    The failure condition is deliberately not "pending > 0": between a library's
+    write and the worker's next pass there are *always* pending events, and a check
+    that fails on the normal state is a check people learn to ignore. It fails when
+    a backlog is *old* -- which is what a stopped or wedged worker looks like, and
+    a running worker that is an hour behind is worse than a stopped one because it
+    looks healthy.
+    """
+
+    pending, oldest = owner.execute(
+        text(
+            "select count(*), "
+            "       extract(epoch from (now() - min(occurred_at))) "
+            "from public.outbox_events where published_at is null"
+        )
+    ).one()
+
+    lag_seconds = float(oldest) if oldest is not None else 0.0
+    threshold = 120.0
+
+    record(
+        "Outbox tuketiliyor (isci calisiyor)",
+        lag_seconds < threshold,
+        f"bekleyen={pending}, en eski olay={lag_seconds:.1f}s "
+        f"(esik {threshold:.0f}s)",
+    )
+
+
 def check_app_imports_resolve() -> None:
     """Every absolute `app.*` import in the source points at something real.
 
@@ -1651,6 +1685,7 @@ def main() -> int:
 
         print("\n-- olcek --")
         check_partitioning_threshold(owner)
+        check_outbox_is_being_drained(owner)
 
         print("\n-- provenance --")
         check_assertion_provenance(owner, app)

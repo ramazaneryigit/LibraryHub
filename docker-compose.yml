@@ -74,6 +74,41 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # The outbox consumer, on its own rather than in a thread inside the API.
+  #
+  # The API runs with several workers, and a thread in each would drain the same
+  # events concurrently. Consume is written so duplicates are survivable, but
+  # "survivable" is not the standard for the thing the search index is built from:
+  # one process drains it.
+  #
+  # Owner credential, because it writes documents in the global plane and has to
+  # read across every tenant to build them.
+  worker:
+    build:
+      context: ./backend
+
+    container_name: libraryhub-worker
+    restart: unless-stopped
+
+    command: ["python", "scripts/worker.py"]
+
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # How long to wait when there is nothing to do, and how many events one pass
+      # takes. A backlog drains in batches rather than in one transaction that
+      # grows until it fails.
+      LIBRARYHUB_WORKER_INTERVAL: "5"
+      LIBRARYHUB_WORKER_BATCH: "1000"
+
+    volumes:
+      - ./backend:/app
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
 
 volumes:
   postgres_data:
