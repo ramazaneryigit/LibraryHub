@@ -23,6 +23,7 @@ from .routes import (
     health,
     identifiers,
     ingestion,
+    ingest,
     isbn,
     manifestations,
     persons,
@@ -48,6 +49,7 @@ api_router.include_router(assertions.router)
 api_router.include_router(isbn.router)
 api_router.include_router(publisher.router)
 api_router.include_router(academic.router)
+api_router.include_router(ingest.router)
 api_router.include_router(works.router)
 api_router.include_router(work_agents.router)
 api_router.include_router(persons.router)

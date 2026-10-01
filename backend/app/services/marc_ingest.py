@@ -1,0 +1,472 @@
+"""Loading a library's MARC file into the catalogue.
+
+The pipeline is three steps and this is the third: `marc.parse_records` reads the
+bytes, `marc_mapping.map_record` decides what a record means, and this writes what
+it decided. Each is separable, which is why a mapping mistake is found by a unit
+test rather than by a half-imported collection.
+
+Why the owner credential
+------------------------
+A batch belongs to one library but writes rows for many: works and manifestations
+in the shared plane, holdings in the tenant plane. A tenant session can only see
+one tenant, so loading a file for another library through one would be impossible
+by construction. This is an administrative import, it runs as the operator, and
+`tenant.holdings` is written with `tenant_id` stated explicitly -- which the owner
+must do precisely because no policy is doing it.
+
+The library code
+----------------
+`852$b` is resolved against `control.branches.code`, normalized the way the
+mapping normalizes it. So the "code list" a library has to supply has a home
+already: it is the branch codes the platform administrator maintains. Today every
+branch in this database carries the code `MAIN`, which resolves nothing -- a
+record saying `TR-KKU` finds no library, and the report says so by name rather
+than dropping the record.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any, Mapping
+
+from sqlalchemy import text
+
+from ..core.ids import uuid7
+from ..core.marc import MarcError, parse_records
+from ..core.marc_mapping import MappedRecord, map_record, normalize_library_code
+from ..core.text import normalize_text
+
+__all__ = ["ingest", "resolve_branch"]
+
+
+def resolve_branch(executor, code: str) -> Any:
+    """The branch a MARC institution code names, if any."""
+
+    return executor.execute(
+        text(
+            "select id, tenant_id from control.branches "
+            "where upper(replace(coalesce(code, ''), ' ', '-')) = :code "
+            "limit 1"
+        ),
+        {"code": normalize_library_code(code)},
+    ).mappings().first()
+
+
+def _agent_for(executor, name: str, agent_type: str) -> uuid.UUID:
+    """An authority record for a person or an organization, reused if it exists.
+
+    Matched on the canonical name. This is the weakest join in the pipeline and it
+    is known to be: authority control -- the same author arriving spelled forty
+    ways -- is a separate piece of work, and pretending otherwise here would mean
+    silently merging people.
+    """
+
+    existing = executor.execute(
+        text(
+            "select ca.entity_id from public.collective_agents ca "
+            "where ca.canonical_name = :name "
+            "union all "
+            "select p.entity_id from public.persons p "
+            "where p.canonical_name = :name "
+            "limit 1"
+        ),
+        {"name": name},
+    ).scalar()
+
+    if existing is not None:
+        return existing
+
+    entity_id = uuid7()
+    kind = "ORGANIZATION" if agent_type == "publisher" else "PERSON"
+
+    executor.execute(
+        text(
+            "insert into public.entities (id, entity_type, created_at, updated_at) "
+            "values (:id, :kind, now(), now())"
+        ),
+        {"id": entity_id, "kind": kind},
+    )
+
+    if kind == "ORGANIZATION":
+        executor.execute(
+            text(
+                "insert into public.collective_agents "
+                "(entity_id, canonical_name, agent_type) "
+                "values (:id, :name, :agent_type)"
+            ),
+            {"id": entity_id, "name": name, "agent_type": agent_type},
+        )
+    else:
+        executor.execute(
+            text(
+                "insert into public.persons (entity_id, canonical_name) "
+                "values (:id, :name)"
+            ),
+            {"id": entity_id, "name": name},
+        )
+
+    return entity_id
+
+
+def _write_record(executor, mapped: MappedRecord) -> Mapping:
+    """One mapped record, as rows. Returns the ids it created."""
+
+    work_id = uuid7()
+    expression_id = uuid7()
+    manifestation_id = uuid7()
+
+    # `entities` before its subtype in every case. The triggers are deferred, but
+    # this order has already cost one debugging session (§0.19).
+    executor.execute(
+        text(
+            "insert into public.entities (id, entity_type, created_at, updated_at) "
+            "values (:id, 'WORK', now(), now())"
+        ),
+        {"id": work_id},
+    )
+    executor.execute(
+        text(
+            "insert into public.works "
+            "(entity_id, canonical_title, original_title, description, created_at) "
+            "values (:id, :title, :subtitle, :author, now())"
+        ),
+        {
+            "id": work_id,
+            "title": mapped.title,
+            "subtitle": mapped.subtitle,
+            "author": (
+                "; ".join(a.name for a in mapped.authors) if mapped.authors else None
+            ),
+        },
+    )
+
+    executor.execute(
+        text(
+            "insert into public.entities (id, entity_type, created_at, updated_at) "
+            "values (:id, 'EXPRESSION', now(), now())"
+        ),
+        {"id": expression_id},
+    )
+    executor.execute(
+        text(
+            "insert into public.expressions (entity_id, language) "
+            "values (:id, :language)"
+        ),
+        {"id": expression_id, "language": mapped.language},
+    )
+    executor.execute(
+        text(
+            "insert into public.work_expression "
+            "(work_entity_id, expression_entity_id) values (:work, :expression)"
+        ),
+        {"work": work_id, "expression": expression_id},
+    )
+
+    statement = " ".join(
+        part
+        for part in (
+            mapped.publication_place,
+            ":" if mapped.publication_place and mapped.publisher else None,
+            mapped.publisher + "," if mapped.publisher else None,
+            mapped.publication_date,
+        )
+        if part
+    ) or None
+
+    executor.execute(
+        text(
+            "insert into public.entities (id, entity_type, created_at, updated_at) "
+            "values (:id, 'MANIFESTATION', now(), now())"
+        ),
+        {"id": manifestation_id},
+    )
+    executor.execute(
+        text(
+            "insert into public.manifestations "
+            "(entity_id, publication_statement, publication_date, edition_statement, "
+            " carrier_type, publication_status) "
+            "values (:id, :statement, :date, :edition, :carrier, 'published')"
+        ),
+        {
+            "id": manifestation_id,
+            "statement": statement,
+            "date": mapped.publication_date,
+            "edition": mapped.edition_statement,
+            "carrier": mapped.carrier_type,
+        },
+    )
+    executor.execute(
+        text(
+            "insert into public.expression_manifestation "
+            "(expression_entity_id, manifestation_entity_id) values (:e, :m)"
+        ),
+        {"e": expression_id, "m": manifestation_id},
+    )
+
+    # Authors. `100` is the main entry, `700` the added ones, and both are
+    # authorship -- the role travels with the relation so "çeviren" is not lost.
+    for author in mapped.authors:
+        agent_id = _agent_for(executor, author.name, "person")
+
+        executor.execute(
+            text(
+                "insert into public.work_agent_relation "
+                "(work_entity_id, agent_entity_id, role) "
+                "values (:work, :agent, :role)"
+            ),
+            {
+                "work": work_id,
+                "agent": agent_id,
+                "role": author.role or ("author" if author.main else "contributor"),
+            },
+        )
+
+    # The publisher, as an authority record rather than a string, so that "which
+    # libraries hold this publisher's books" stays answerable.
+    if mapped.publisher:
+        publisher_id = _agent_for(executor, mapped.publisher, "publisher")
+
+        executor.execute(
+            text(
+                "insert into public.manifestation_agent_relation "
+                "(manifestation_entity_id, agent_entity_id, role) "
+                "values (:manifestation, :agent, 'publisher')"
+            ),
+            {"manifestation": manifestation_id, "agent": publisher_id},
+        )
+
+    for scheme, values in (("ISBN", mapped.isbn), ("ISSN", mapped.issn)):
+        for value in values:
+            executor.execute(
+                text(
+                    "insert into public.identifiers "
+                    "(id, entity_id, scheme, value, preferred, created_at) "
+                    "values (:id, :entity, :scheme, :value, true, now())"
+                ),
+                {
+                    "id": uuid7(),
+                    "entity": manifestation_id,
+                    "scheme": scheme,
+                    "value": value,
+                },
+            )
+
+    return {
+        "work_entity_id": work_id,
+        "expression_entity_id": expression_id,
+        "manifestation_entity_id": manifestation_id,
+    }
+
+
+def _write_holding(executor, mapped: MappedRecord, ids: Mapping) -> Any:
+    """Place a copy in the library the record names, if we know which that is.
+
+    `local_holding_key` is the control number: a library's own key for the record
+    is exactly what `001` is, and it is unique per library, which is what the
+    constraint requires.
+    """
+
+    branch = resolve_branch(executor, mapped.library_code.raw)
+
+    if branch is None:
+        return None
+
+    existing = executor.execute(
+        text(
+            "select id from tenant.holdings "
+            "where tenant_id = :tenant and branch_id = :branch "
+            "  and manifestation_entity_id = :manifestation"
+        ),
+        {
+            "tenant": branch["tenant_id"],
+            "branch": branch["id"],
+            "manifestation": ids["manifestation_entity_id"],
+        },
+    ).scalar()
+
+    if existing is not None:
+        return existing
+
+    holding_id = uuid7()
+
+    executor.execute(
+        text(
+            "insert into tenant.holdings "
+            "(id, tenant_id, branch_id, holding_type, local_holding_key, "
+            " call_number, manifestation_entity_id, status, created_at, updated_at) "
+            "values (:id, :tenant, :branch, 'physical', :key, :call_number, "
+            "        :manifestation, 'active', now(), now())"
+        ),
+        {
+            "id": holding_id,
+            "tenant": branch["tenant_id"],
+            "branch": branch["id"],
+            "key": mapped.control_number or str(holding_id)[:12],
+            "call_number": mapped.call_number,
+            "manifestation": ids["manifestation_entity_id"],
+        },
+    )
+
+    return holding_id
+
+
+def ingest(
+    executor,
+    data: bytes,
+    *,
+    source_code: str,
+    source_name: str,
+    limit: int | None = None,
+) -> Mapping:
+    """Read a MARC file and write what it says. Returns the report.
+
+    The report is the point. A run that says "42,318 records" and nothing else
+    proves nothing; this one says how many could not be read, and why, grouped by
+    the field that failed.
+    """
+
+    source_id = executor.execute(
+        text("select id from public.source_systems where code = :code"),
+        {"code": source_code},
+    ).scalar()
+
+    if source_id is None:
+        source_id = uuid7()
+
+        executor.execute(
+            text(
+                "insert into public.source_systems "
+                "(id, code, name, system_type, trust_level, license, attribution, "
+                " base_url, is_active, created_at) "
+                "values (:id, :code, :name, 'tenant', 80, 'internal', :attr, '', "
+                "        true, now())"
+            ),
+            {
+                "id": source_id,
+                "code": source_code,
+                "name": source_name,
+                "attr": source_name,
+            },
+        )
+
+    batch_id = uuid7()
+
+    executor.execute(
+        text(
+            "insert into public.ingestion_batches "
+            "(id, source_system, status, total, created, updated, unchanged, failed, "
+            " started_at, created_at) "
+            "values (:id, :source, 'running', 0, 0, 0, 0, 0, now(), now())"
+        ),
+        {"id": batch_id, "source": source_code},
+    )
+
+    total = created = holdings = unchanged = failed = 0
+    problems: dict = {}
+    examples: list = []
+    unreadable: list = []
+
+    try:
+        for record in parse_records(data, strict=False):
+            if limit is not None and total >= limit:
+                break
+
+            total += 1
+
+            try:
+                mapped = map_record(record)
+            except Exception as error:  # noqa: BLE001 - the reason is the report
+                failed += 1
+                unreadable.append(f"{type(error).__name__}: {str(error)[:120]}")
+                continue
+
+            for problem in mapped.problems:
+                problems[problem] = problems.get(problem, 0) + 1
+
+            if not mapped.usable:
+                failed += 1
+
+                if len(examples) < 10:
+                    examples.append(f"okunamadi: {mapped.problems[0] if mapped.problems else 'baslik yok'}")
+
+                continue
+
+            existing = None
+
+            if mapped.control_number:
+                existing = executor.execute(
+                    text(
+                        "select w.entity_id from public.works w "
+                        "join public.identifiers i on i.entity_id = w.entity_id "
+                        "where i.scheme = 'MARC' and i.value = :value limit 1"
+                    ),
+                    {"value": mapped.control_number},
+                ).scalar()
+
+            if existing is not None:
+                unchanged += 1
+                continue
+
+            ids = _write_record(executor, mapped)
+            created += 1
+
+            # The control number as an identifier, which is what makes a second
+            # run of the same file recognise the record instead of duplicating it.
+            if mapped.control_number:
+                executor.execute(
+                    text(
+                        "insert into public.identifiers "
+                        "(id, entity_id, scheme, value, preferred, created_at) "
+                        "values (:id, :entity, 'MARC', :value, false, now())"
+                    ),
+                    {
+                        "id": uuid7(),
+                        "entity": ids["work_entity_id"],
+                        "value": mapped.control_number,
+                    },
+                )
+
+            if mapped.gives_a_holding:
+                if _write_holding(executor, mapped, ids) is not None:
+                    holdings += 1
+
+    except MarcError as error:
+        failed += 1
+        unreadable.append(f"MarcError: {str(error)[:160]}")
+
+    executor.execute(
+        text(
+            "update public.ingestion_batches "
+            "set status = 'finished', total = :total, created = :created, "
+            "    updated = :updated, unchanged = :unchanged, failed = :failed, "
+            "    finished_at = now() "
+            "where id = :id"
+        ),
+        {
+            "id": batch_id,
+            "total": total,
+            "created": created,
+            # Not the holding count. `updated` means records that already existed
+            # and changed, and nothing here updates a record yet -- the first
+            # version of this wrote the holdings into it, which would have made
+            # the column mean two different things depending on who read it.
+            "updated": 0,
+            "unchanged": unchanged,
+            "failed": failed,
+        },
+    )
+
+    return {
+        "batch_id": str(batch_id),
+        "source_system": source_code,
+        "total": total,
+        "created": created,
+        "holdings": holdings,
+        "unchanged": unchanged,
+        "failed": failed,
+        # Named and counted, so the answer to "why 416" is a list rather than a
+        # shrug.
+        "problems": dict(sorted(problems.items(), key=lambda kv: -kv[1])),
+        "examples": examples,
+        "unreadable": unreadable[:10],
+    }
