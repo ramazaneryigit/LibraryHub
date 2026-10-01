@@ -112,7 +112,6 @@ def holders(
             {
                 "library": row["library"],
                 "institution": row["institution"],
-                "branch": row["branch"],
                 "edition": row["edition"],
                 "holdings": row["holdings"],
             }

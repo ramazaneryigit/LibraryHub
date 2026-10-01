@@ -13,12 +13,12 @@ made this way is a claim by the person, not a verified fact. The distinction is
 written down rather than glossed, because the alternative is a system that looks
 like it verified something and did not.
 
-Creating a person
------------------
-If no `persons` entity carries the ORCID, one is created. That is the only place
-this module writes on behalf of somebody else, and it is deliberate: an
-academician with no record in the catalogue has to be able to make one, or the
-profile has nothing to open.
+Reading across libraries
+------------------------
+"Which libraries hold my book" is a question that crosses every tenant, so it is
+read through `public.holdings_compat` rather than `tenant.holdings`. The tenant
+table is fail-closed per tenant, and a request from an academician carries no
+tenant at all -- so it would answer with zero rows and nothing would say why.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ from sqlalchemy import text
 
 from ..core.ids import uuid7
 from ..core.orcid import normalize_orcid
-from ..core.text import normalize_text
 
 __all__ = [
     "bind_orcid",
@@ -109,7 +108,6 @@ def bind_orcid(executor, user, orcid: str, display_name: str | None = None) -> M
             "insert into public.identifiers "
             "(id, entity_id, scheme, value, preferred, created_at) "
             "values (:id, :entity_id, 'ORCID', :value, true, now())"
-            "on conflict do nothing"
         ),
         {"id": uuid7(), "entity_id": person_id, "value": canonical},
     )
@@ -119,27 +117,18 @@ def bind_orcid(executor, user, orcid: str, display_name: str | None = None) -> M
         {"person": person_id, "id": user.id},
     )
 
-    # The index is built from the source tables and this person may be new, so the
-    # name is searchable only after the indexer runs. Said here because otherwise
-    # the next person to search for themselves finds nothing and concludes the
-    # profile did not save.
     return {
         "orcid": canonical,
         "person_entity_id": person_id,
         "created": created,
-        "normalized_name": normalize_text(display_name or ""),
     }
 
 
 def profile(executor, user) -> Mapping:
-    """The person this account speaks for, and how much of them we know."""
+    """The person this account speaks for."""
 
     if user.subject_entity_id is None:
-        return {
-            "bound": False,
-            "orcid": None,
-            "person_entity_id": None,
-        }
+        return {"bound": False, "orcid": None, "person_entity_id": None}
 
     row = executor.execute(
         text(
@@ -168,24 +157,28 @@ def profile(executor, user) -> Mapping:
 
 
 # A person's works, through both roads: direct authorship of a work, and
-# authorship of an expression inside one. Both are authorship and a profile that
+# authorship of an expression inside one. Both are authorship, and a profile that
 # showed only the first would hide every translated or illustrated title.
+#
+# "How many libraries" is a `count(distinct tenant_id)` over the projection -- no
+# join to `control` at all, because the projection already knows its tenant.
 WORKS = """
 select
     w.entity_id       as work_entity_id,
     w.canonical_title as title,
-    (select count(distinct h.id)
+    (select count(distinct h.holding_id)
        from public.expression_manifestation em
-       join public.work_expression we2 on we2.expression_entity_id = em.expression_entity_id
-       join tenant.holdings h on h.manifestation_entity_id = em.manifestation_entity_id
+       join public.work_expression we2
+         on we2.expression_entity_id = em.expression_entity_id
+       join public.holdings_compat h
+         on h.manifestation_entity_id = em.manifestation_entity_id
       where we2.work_entity_id = w.entity_id) as holdings,
-    (select count(distinct t.id)
+    (select count(distinct h.tenant_id)
        from public.expression_manifestation em
-       join public.work_expression we2 on we2.expression_entity_id = em.expression_entity_id
-       join tenant.holdings h on h.manifestation_entity_id = em.manifestation_entity_id
-       join control.branches b on b.id = h.branch_id
-       join control.organizations o on o.id = b.organization_id
-       join control.tenants t on t.id = o.tenant_id
+       join public.work_expression we2
+         on we2.expression_entity_id = em.expression_entity_id
+       join public.holdings_compat h
+         on h.manifestation_entity_id = em.manifestation_entity_id
       where we2.work_entity_id = w.entity_id) as libraries
 from public.works w
 where w.entity_id in (
@@ -224,19 +217,22 @@ def libraries_holding(executor, work_id) -> list[Mapping]:
 
     return executor.execute(
         text(
-            "select t.display_name as library, o.name as institution, "
-            "       b.name as branch, m.publication_date as edition, "
-            "       count(h.id) as holdings "
+            "select t.display_name as library, "
+            "       ca.canonical_name as institution, "
+            "       m.publication_date as edition, "
+            "       count(h.holding_id) as holdings "
             "from public.expression_manifestation em "
             "join public.work_expression we "
             "  on we.expression_entity_id = em.expression_entity_id "
-            "join public.manifestations m on m.entity_id = em.manifestation_entity_id "
-            "join tenant.holdings h on h.manifestation_entity_id = m.entity_id "
-            "join control.branches b on b.id = h.branch_id "
-            "join control.organizations o on o.id = b.organization_id "
-            "join control.tenants t on t.id = o.tenant_id "
+            "join public.manifestations m "
+            "  on m.entity_id = em.manifestation_entity_id "
+            "join public.holdings_compat h "
+            "  on h.manifestation_entity_id = m.entity_id "
+            "join control.tenants t on t.id = h.tenant_id "
+            "left join public.collective_agents ca "
+            "  on ca.entity_id = h.holding_institution_entity_id "
             "where we.work_entity_id = :work_id "
-            "group by t.display_name, o.name, b.name, m.publication_date "
+            "group by t.display_name, ca.canonical_name, m.publication_date "
             "order by t.display_name, m.publication_date"
         ),
         {"work_id": work_id},

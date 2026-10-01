@@ -1,21 +1,30 @@
 """What a publisher can see, and what it can say.
 
 The question a publisher actually has is "who has my books", and the union
-catalogue has been able to answer it since Aşama 3 without a single new row: a
-title reaches a library through
+catalogue answers it from the chain:
 
-    collective_agents (agent_type='publisher') <- manifestation_agent_relation
+    collective_agents (a publisher) <- manifestation_agent_relation
       -> manifestation -> expression_manifestation -> work_expression -> work
-      <- expression_manifestation <- manifestation <- holdings -> branches
-      -> organizations -> tenants
+      <- expression_manifestation <- holdings -> tenant
 
-Nothing here is derived or cached. It is the same chain the library workspace
-walks, read from the other end.
+Read through `public.holdings_compat`, not `tenant.holdings`.
 
-Declaring a title reuses `isbn.declare_publication` rather than writing the chain
-again: a publisher announcing a book and an agency announcing one are the same
-act, and two implementations of it would eventually disagree about what a
-publication record contains.
+That is not a detail. A publisher asks across every library, but `tenant.holdings`
+is fail-closed per tenant and this request arrives with no tenant bound -- so the
+tenant table answers with zero rows and the report is silently empty. That is
+exactly what happened: the endpoints worked, the numbers were all zero, and
+nothing said why. The projection is the same holdings in the global plane, and it
+carries `tenant_id` and `holding_institution_entity_id`, which is why the whole
+`branches -> organizations -> tenants` hop disappears. "How many libraries" is a
+`count(distinct tenant_id)`.
+
+There is no `branch` in the answer, and that is the boundary rather than a
+shortcoming. A publisher needs to know that Kirikkale University holds the book,
+not which of its branches does. Which branch is tenant-plane data, and a reader
+looking across tenants should not have it.
+
+Nothing here is derived or cached. It is the chain the library workspace walks,
+read from the other end.
 """
 
 from __future__ import annotations
@@ -31,40 +40,43 @@ __all__ = [
 ]
 
 
-# Which libraries hold which of this publisher's titles. Holdings, not items: a
-# library that has catalogued a title but not yet barcoded a copy still *holds*
-# it, and reporting items would hide exactly the libraries in the middle of
-# processing.
+# Holdings, not copies. A library that has catalogued a title but not yet barcoded
+# a copy still *holds* it, and counting items would hide exactly the libraries in
+# the middle of processing.
 TITLES = """
 select
-    w.entity_id            as work_entity_id,
-    w.canonical_title      as title,
+    w.entity_id       as work_entity_id,
+    w.canonical_title as title,
     (select count(distinct m2.entity_id)
        from public.expression_manifestation em2
-       join public.work_expression we2 on we2.expression_entity_id = em2.expression_entity_id
-       join public.manifestations m2 on m2.entity_id = em2.manifestation_entity_id
+       join public.work_expression we2
+         on we2.expression_entity_id = em2.expression_entity_id
+       join public.manifestations m2
+         on m2.entity_id = em2.manifestation_entity_id
        join public.manifestation_agent_relation mar2
          on mar2.manifestation_entity_id = m2.entity_id
       where we2.work_entity_id = w.entity_id
         and mar2.agent_entity_id = :agent_id) as manifestations,
-    (select count(distinct h.id)
+    (select count(distinct h3.holding_id)
        from public.expression_manifestation em3
-       join public.work_expression we3 on we3.expression_entity_id = em3.expression_entity_id
-       join tenant.holdings h on h.manifestation_entity_id = em3.manifestation_entity_id
+       join public.work_expression we3
+         on we3.expression_entity_id = em3.expression_entity_id
+       join public.holdings_compat h3
+         on h3.manifestation_entity_id = em3.manifestation_entity_id
       where we3.work_entity_id = w.entity_id) as holdings,
-    (select count(distinct t.id)
+    (select count(distinct h4.tenant_id)
        from public.expression_manifestation em4
-       join public.work_expression we4 on we4.expression_entity_id = em4.expression_entity_id
-       join tenant.holdings h4 on h4.manifestation_entity_id = em4.manifestation_entity_id
-       join control.branches b4 on b4.id = h4.branch_id
-       join control.organizations o4 on o4.id = b4.organization_id
-       join control.tenants t on t.id = o4.tenant_id
+       join public.work_expression we4
+         on we4.expression_entity_id = em4.expression_entity_id
+       join public.holdings_compat h4
+         on h4.manifestation_entity_id = em4.manifestation_entity_id
       where we4.work_entity_id = w.entity_id) as libraries
 from public.works w
 where exists (
     select 1
       from public.work_expression we
-      join public.expression_manifestation em on em.expression_entity_id = we.expression_entity_id
+      join public.expression_manifestation em
+        on em.expression_entity_id = we.expression_entity_id
       join public.manifestation_agent_relation mar
         on mar.manifestation_entity_id = em.manifestation_entity_id
      where we.work_entity_id = w.entity_id
@@ -75,52 +87,90 @@ limit :limit
 """
 
 
+# Which libraries hold one title, and which printing of it. The library name comes
+# from `control.tenants`, which is readable across tenants by design; the
+# institution from the authority record the projection points at.
 HOLDERS = """
 select
-    t.display_name   as library,
-    o.name           as institution,
-    b.name           as branch,
-    m.publication_date as edition,
-    count(h.id)      as holdings
+    t.display_name        as library,
+    ca.canonical_name     as institution,
+    m.publication_date    as edition,
+    count(h.holding_id)   as holdings
 from public.expression_manifestation em
-join public.work_expression we on we.expression_entity_id = em.expression_entity_id
-join public.manifestations m on m.entity_id = em.manifestation_entity_id
-join tenant.holdings h on h.manifestation_entity_id = m.entity_id
-join control.branches b on b.id = h.branch_id
-join control.organizations o on o.id = b.organization_id
-join control.tenants t on t.id = o.tenant_id
+join public.work_expression we
+  on we.expression_entity_id = em.expression_entity_id
+join public.manifestations m
+  on m.entity_id = em.manifestation_entity_id
+join public.holdings_compat h
+  on h.manifestation_entity_id = m.entity_id
+join control.tenants t
+  on t.id = h.tenant_id
+left join public.collective_agents ca
+  on ca.entity_id = h.holding_institution_entity_id
 where we.work_entity_id = :work_id
   and exists (
       select 1 from public.manifestation_agent_relation mar
        where mar.manifestation_entity_id = m.entity_id
          and mar.agent_entity_id = :agent_id
   )
-group by t.display_name, o.name, b.name, m.publication_date
+group by t.display_name, ca.canonical_name, m.publication_date
 order by t.display_name, m.publication_date
 """
 
 
-def _require_agent(user) -> Any:
+SUMMARY = """
+select
+    (select count(distinct we.work_entity_id)
+       from public.work_expression we
+       join public.expression_manifestation em
+         on em.expression_entity_id = we.expression_entity_id
+       join public.manifestation_agent_relation mar
+         on mar.manifestation_entity_id = em.manifestation_entity_id
+      where mar.agent_entity_id = :agent_id) as titles,
+    (select count(distinct mar.manifestation_entity_id)
+       from public.manifestation_agent_relation mar
+      where mar.agent_entity_id = :agent_id) as manifestations,
+    (select count(distinct h.holding_id)
+       from public.manifestation_agent_relation mar
+       join public.holdings_compat h
+         on h.manifestation_entity_id = mar.manifestation_entity_id
+      where mar.agent_entity_id = :agent_id) as holdings,
+    (select count(distinct h.tenant_id)
+       from public.manifestation_agent_relation mar
+       join public.holdings_compat h
+         on h.manifestation_entity_id = mar.manifestation_entity_id
+      where mar.agent_entity_id = :agent_id) as libraries,
+    (select count(*)
+       from public.manifestations m
+       join public.manifestation_agent_relation mar
+         on mar.manifestation_entity_id = m.entity_id
+      where mar.agent_entity_id = :agent_id
+        and m.publication_status in ('announced', 'in_press')) as upcoming
+"""
+
+
+def _agent(user) -> Any:
+    """The authority record this account speaks for.
+
+    Not a display name: answering "which titles are mine" from a name would turn a
+    spelling mistake into a different publisher.
+    """
+
     if user.subject_entity_id is None:
         raise ValueError(
-            "Bu hesap bir yayinevi kaydina bagli degil. "
-            "Hesabi bir otorite kaydina baglamadan 'benim kitaplarim' sorusu "
-            "cevaplanamaz."
+            "Bu hesap bir yayinevi kaydina bagli degil. Hesabi bir otorite "
+            "kaydina baglamadan 'benim kitaplarim' cevaplanamaz."
         )
 
     return user.subject_entity_id
 
 
 def publisher_titles(executor, user, *, limit: int = 200) -> list[Mapping]:
-    """This publisher's titles, most widely held first.
-
-    Ordered by how many libraries hold it, because that is the number the
-    publisher opened the screen for.
-    """
+    """This publisher's titles, most widely held first."""
 
     return executor.execute(
         text(TITLES),
-        {"agent_id": _require_agent(user), "limit": limit},
+        {"agent_id": _agent(user), "limit": limit},
     ).mappings().all()
 
 
@@ -129,48 +179,14 @@ def library_report(executor, user, work_id) -> list[Mapping]:
 
     return executor.execute(
         text(HOLDERS),
-        {"agent_id": _require_agent(user), "work_id": work_id},
+        {"agent_id": _agent(user), "work_id": work_id},
     ).mappings().all()
 
 
 def summary(executor, user) -> Mapping:
-    """The four numbers a publisher wants on arrival."""
-
-    agent_id = _require_agent(user)
+    """The numbers a publisher wants on arrival."""
 
     return executor.execute(
-        text(
-            """
-            select
-                (select count(distinct we.work_entity_id)
-                   from public.work_expression we
-                   join public.expression_manifestation em
-                     on em.expression_entity_id = we.expression_entity_id
-                   join public.manifestation_agent_relation mar
-                     on mar.manifestation_entity_id = em.manifestation_entity_id
-                  where mar.agent_entity_id = :agent_id) as titles,
-                (select count(distinct m.entity_id)
-                   from public.manifestation_agent_relation mar
-                   join public.manifestations m on m.entity_id = mar.manifestation_entity_id
-                  where mar.agent_entity_id = :agent_id) as manifestations,
-                (select count(distinct h.id)
-                   from public.manifestation_agent_relation mar
-                   join tenant.holdings h on h.manifestation_entity_id = mar.manifestation_entity_id
-                  where mar.agent_entity_id = :agent_id) as holdings,
-                (select count(distinct t.id)
-                   from public.manifestation_agent_relation mar
-                   join tenant.holdings h on h.manifestation_entity_id = mar.manifestation_entity_id
-                   join control.branches b on b.id = h.branch_id
-                   join control.organizations o on o.id = b.organization_id
-                   join control.tenants t on t.id = o.tenant_id
-                  where mar.agent_entity_id = :agent_id) as libraries,
-                (select count(*)
-                   from public.manifestations m
-                   join public.manifestation_agent_relation mar
-                     on mar.manifestation_entity_id = m.entity_id
-                  where mar.agent_entity_id = :agent_id
-                    and m.publication_status in ('announced', 'in_press')) as upcoming
-            """
-        ),
-        {"agent_id": agent_id},
+        text(SUMMARY),
+        {"agent_id": _agent(user)},
     ).mappings().one()
