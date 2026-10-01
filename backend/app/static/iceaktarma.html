@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LibraryHub · İçe Aktarma</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/admin.css">
+</head>
+
+<body class="admin">
+
+<header class="topbar">
+    <div class="brand">
+        <div class="logo">LH</div>
+        <div>
+            <h1>İçe aktarma</h1>
+            <p>Kütüphane koleksiyonlarını MARC dosyasından yükle</p>
+        </div>
+        <div id="session" class="session"></div>
+    </div>
+</header>
+
+<main class="admin-main">
+
+    <section id="login-view" class="login-card" hidden>
+        <h2>Yönetici girişi</h2>
+        <p class="muted">İçe aktarma platform yöneticisinin işidir.</p>
+
+        <form id="login-form" class="stack">
+            <label>E-posta <input id="login-email" type="email" required></label>
+            <label>Parola <input id="login-password" type="password" required></label>
+            <button type="submit" class="primary">Giriş</button>
+        </form>
+
+        <div id="login-status" class="status" hidden></div>
+    </section>
+
+    <div id="workspace" hidden>
+        <nav class="tabs" id="tabs">
+            <button type="button" class="tab" data-view="upload">Yeni yükleme</button>
+            <button type="button" class="tab" data-view="batches">Geçmiş</button>
+        </nav>
+
+        <div id="view-status" class="status" hidden></div>
+
+        <section id="view-upload" class="view" hidden>
+            <form id="upload-form" class="card stack">
+                <h3>MARC dosyası yükle</h3>
+
+                <p class="muted note">
+                    Kütüphanenin sisteminden aldığınız <code>.mrc</code> (ISO 2709)
+                    veya MARCXML dosyasını seçin. <strong>Sınır</strong> alanı ilk
+                    denemeyi küçük tutmak içindir: yüz kayıtla başlamak, bir eşleme
+                    hatasını elli bin kez uygulanmadan önce bulmanın yoludur.
+                </p>
+
+                <label>Dosya <input type="file" id="file" required></label>
+                <label>Kaynak kodu <input id="source" required placeholder="kku" value="kku"></label>
+                <label>Kaynak adı <input id="name" required placeholder="Kırıkkale Üniversitesi"></label>
+                <label>Sınır <input id="limit" type="number" min="1" placeholder="boş = hepsi"></label>
+
+                <div class="row">
+                    <button type="submit" class="primary">Yükle</button>
+                </div>
+            </form>
+
+            <div id="upload-report" hidden></div>
+        </section>
+
+        <section id="view-batches" class="view" hidden>
+            <div class="toolbar">
+                <button type="button" id="batches-refresh">Yenile</button>
+                <span class="muted" id="batches-summary"></span>
+            </div>
+
+            <div id="batches-list" class="list"></div>
+            <div id="batch-detail" class="detail" hidden></div>
+        </section>
+    </div>
+
+</main>
+
+<footer>LibraryHub · <a href="/admin">küratör paneli</a> · <a href="/">arama</a></footer>
+
+<script src="/static/iceaktarma.js"></script>
+
+</body>
+
+</html>

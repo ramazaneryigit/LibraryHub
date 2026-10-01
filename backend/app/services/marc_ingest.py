@@ -26,6 +26,7 @@ than dropping the record.
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any, Mapping
 
@@ -36,7 +37,45 @@ from ..core.marc import MarcError, parse_records
 from ..core.marc_mapping import MappedRecord, map_record, normalize_library_code
 from ..core.text import normalize_text
 
-__all__ = ["ingest", "resolve_branch"]
+__all__ = ["ingest", "list_batches", "read_batch", "resolve_branch"]
+
+
+def list_batches(executor, *, limit: int = 50) -> list[Mapping]:
+    """Every import run, newest first, without the report bodies.
+
+    The list is for choosing; the report is for reading. Sending two hundred
+    problem lists to draw a table would be most of a megabyte to answer a question
+    nobody asked yet.
+    """
+
+    return executor.execute(
+        text(
+            "select id, source_system, status, total, created, unchanged, failed, "
+            "       started_at, finished_at, created_at "
+            "from public.ingestion_batches "
+            "order by created_at desc "
+            "limit :limit"
+        ),
+        {"limit": limit},
+    ).mappings().all()
+
+
+def read_batch(executor, batch_id) -> Mapping | None:
+    """One run, with the report it produced."""
+
+    row = executor.execute(
+        text(
+            "select id, source_system, status, total, created, unchanged, failed, "
+            "       started_at, finished_at, created_at, report "
+            "from public.ingestion_batches where id = :id"
+        ),
+        {"id": batch_id},
+    ).mappings().first()
+
+    if row is None:
+        return None
+
+    return row
 
 
 def resolve_branch(executor, code: str) -> Any:
@@ -434,29 +473,7 @@ def ingest(
         failed += 1
         unreadable.append(f"MarcError: {str(error)[:160]}")
 
-    executor.execute(
-        text(
-            "update public.ingestion_batches "
-            "set status = 'finished', total = :total, created = :created, "
-            "    updated = :updated, unchanged = :unchanged, failed = :failed, "
-            "    finished_at = now() "
-            "where id = :id"
-        ),
-        {
-            "id": batch_id,
-            "total": total,
-            "created": created,
-            # Not the holding count. `updated` means records that already existed
-            # and changed, and nothing here updates a record yet -- the first
-            # version of this wrote the holdings into it, which would have made
-            # the column mean two different things depending on who read it.
-            "updated": 0,
-            "unchanged": unchanged,
-            "failed": failed,
-        },
-    )
-
-    return {
+    report = {
         "batch_id": str(batch_id),
         "source_system": source_code,
         "total": total,
@@ -470,3 +487,31 @@ def ingest(
         "examples": examples,
         "unreadable": unreadable[:10],
     }
+
+    executor.execute(
+        text(
+            "update public.ingestion_batches "
+            "set status = 'finished', total = :total, created = :created, "
+            "    updated = :updated, unchanged = :unchanged, failed = :failed, "
+            "    finished_at = now(), report = cast(:report as jsonb) "
+            "where id = :id"
+        ),
+        {
+            "id": batch_id,
+            "total": total,
+            "created": created,
+            # Not the holding count. `updated` means records that already existed
+            # and changed, and nothing here updates a record yet -- the first
+            # version of this wrote the holdings into it, which would have made
+            # the column mean two different things depending on who read it.
+            "updated": 0,
+            "unchanged": unchanged,
+            "failed": failed,
+            # Stored, not only returned. The operator reads the response once and
+            # closes the tab; the reason a block of records did not arrive has to
+            # outlive that.
+            "report": json.dumps(report, ensure_ascii=False),
+        },
+    )
+
+    return report

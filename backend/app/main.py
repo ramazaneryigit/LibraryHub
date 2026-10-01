@@ -81,6 +81,11 @@ def create_app() -> FastAPI:
     def publisher_workspace():
         return FileResponse("app/static/yayinevi.html")
 
+    # Loading a library's MARC file, and reading what the last run could not.
+    @application.get("/iceaktarma", include_in_schema=False)
+    def ingest_workspace():
+        return FileResponse("app/static/iceaktarma.html")
+
     return application
 
 
