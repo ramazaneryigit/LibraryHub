@@ -76,6 +76,11 @@ def create_app() -> FastAPI:
     def library_workspace():
         return FileResponse("app/static/kutuphane.html")
 
+    # A publisher's: which libraries hold its books.
+    @application.get("/yayinevi", include_in_schema=False)
+    def publisher_workspace():
+        return FileResponse("app/static/yayinevi.html")
+
     return application
 
 

@@ -361,6 +361,7 @@ class User(Base):
         ),
         UniqueConstraint("email", name="uq_users_email"),
         Index("ix_users_tenant_id", "tenant_id"),
+        Index("ix_users_subject_entity", "subject_entity_id"),
         {"schema": CONTROL_SCHEMA},
     )
 
@@ -423,6 +424,17 @@ class User(Base):
         # expressions that broke `outbox_events`. Raw SQL inserts do not run
         # Python-side defaults, and the tests create accounts that way.
         server_default="tenant_staff",
+    )
+
+    # The authority record this account speaks for: a publisher account points at
+    # its `collective_agents` row, an academician account at its `persons` row.
+    # Null for library staff and the platform, who act for a tenant instead.
+    #
+    # Without it "which titles are mine" is unanswerable, and answering it from a
+    # display name would make a spelling mistake into a different publisher.
+    subject_entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("entities.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     # NULL means the address has never been shown to receive mail, and such an

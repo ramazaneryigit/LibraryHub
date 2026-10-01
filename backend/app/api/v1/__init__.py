@@ -25,6 +25,7 @@ from .routes import (
     isbn,
     manifestations,
     persons,
+    publisher,
     reconciliation,
     relations,
     search,
@@ -44,6 +45,7 @@ api_router.include_router(admin.router)
 api_router.include_router(tenant.router)
 api_router.include_router(assertions.router)
 api_router.include_router(isbn.router)
+api_router.include_router(publisher.router)
 api_router.include_router(works.router)
 api_router.include_router(work_agents.router)
 api_router.include_router(persons.router)
