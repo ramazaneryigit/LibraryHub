@@ -192,6 +192,38 @@ def match_key(name: str | None) -> str:
     return f"{surname}|{initials}"
 
 
+# Words that say what a body is rather than which one it is. Every publisher's
+# name contains `Yayınları`, so sharing it is not evidence of anything -- and
+# measured on real data it was the strongest thing in the queue: `Türkiye İş
+# Bankası Kültür Yayınları` and `TTK Yayınları` scored 0.90 on it and sat at the
+# top, above the genuine spelling variants a reviewer was looking for.
+#
+# Excluded from the token comparison rather than weighted down, because a shared
+# generic word is not weak evidence, it is no evidence.
+GENERIC = {
+    "yayinlari", "yayincilik", "yayinevi", "yayin", "basimevi", "matbaa",
+    "dergi", "dergisi", "kitap", "kitaplari", "kutuphanesi",
+    "universitesi", "university", "universite", "enstitusu", "fakultesi",
+    "press", "publishing", "publisher", "publishers", "books", "book",
+    "inc", "ltd", "llc", "as", "gmbh", "co",
+}
+
+
+def _tokens(value: str | None) -> set:
+    """The words of a name that carry identity."""
+
+    words = fold(value).split()
+
+    if not words:
+        return set()
+
+    meaningful = {word for word in words if word not in GENERIC}
+
+    # Everything was generic, so nothing is filtered -- otherwise two names would
+    # compare as equal for having no tokens at all.
+    return meaningful or set(words)
+
+
 def closeness(left: str | None, right: str | None) -> float:
     """Character-level likeness, for spellings of one name.
 
@@ -221,8 +253,8 @@ def similarity(left: str | None, right: str | None) -> float:
     would call them half different purely because the order changed.
     """
 
-    a = set(fold(left).split())
-    b = set(fold(right).split())
+    a = _tokens(left)
+    b = _tokens(right)
 
     if not a or not b:
         return 0.0
@@ -308,7 +340,19 @@ def suggest(
         # The surname at character level, because token overlap cannot see that
         # `dostoevsky` and `dostoyevski` are one name. Scaled rather than taken as
         # equal: a near-miss surname is weaker evidence than a shared token.
-        surname_score = closeness(parse_name(name)[0], parse_name(other_name)[0]) * 0.9
+        #
+        # Skipped when either surname is a generic word. `TTK Yayınları` and
+        # `Türkiye İş Bankası Kültür Yayınları` both end in `Yayınları`, so their
+        # surnames compare at 1.0 and they scored 0.90 -- the noise fix had to
+        # reach here too, or it only fixed half the score.
+        left_surname = parse_name(name)[0]
+        right_surname = parse_name(other_name)[0]
+
+        surname_score = 0.0
+
+        if left_surname not in GENERIC and right_surname not in GENERIC:
+            surname_score = closeness(left_surname, right_surname) * 0.9
+
         score = max(score, surname_score)
 
         # The key matching is worth raising, because a shared surname and initial

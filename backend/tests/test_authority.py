@@ -100,6 +100,37 @@ class SimilarityTests(unittest.TestCase):
         self.assertEqual(similarity("Dostoyevski, Fyodor", "Kaya, Bilge"), 0.0)
 
 
+class NoiseTests(unittest.TestCase):
+    """Generic words are not evidence, and measured on real data they were the
+    strongest thing in the queue."""
+
+    def test_two_unrelated_publishers_do_not_resemble_each_other(self):
+        found = suggest(
+            "TTK Yayınları",
+            [{"entity_id": "1", "name": "Türkiye İş Bankası Kültür Yayınları"}],
+        )
+
+        self.assertEqual(found, [], "ortak 'Yayınları' kelimesi kanıt değil")
+
+    def test_the_shared_generic_word_does_not_raise_an_unrelated_score(self):
+        self.assertEqual(
+            similarity("TTK Yayınları", "Türkiye İş Bankası Kültür Yayınları"),
+            0.0,
+        )
+
+    def test_a_distinctive_word_still_counts(self):
+        self.assertGreater(similarity("Papatya Yayıncılık", "Papatya Kitap"), 0.0)
+
+    def test_a_name_made_only_of_generic_words_still_matches_itself(self):
+        """The fallback: otherwise two bodies both called `Yayınları` would match
+        nothing at all, instead of matching each other."""
+
+        found = suggest("Yayınları", [{"entity_id": "1", "name": "Yayınları"}])
+
+        self.assertTrue(found)
+        self.assertTrue(found[0].decides)
+
+
 class SuggestingTests(unittest.TestCase):
     def setUp(self):
         self.catalogue = [
