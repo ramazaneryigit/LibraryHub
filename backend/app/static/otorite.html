@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LibraryHub · Otorite Kuyruğu</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/admin.css">
+</head>
+
+<body class="admin">
+
+<header class="topbar">
+    <div class="brand">
+        <div class="logo">LH</div>
+        <div>
+            <h1>Otorite kuyruğu</h1>
+            <p>Benzer görünen adlar — karar verilmedi</p>
+        </div>
+        <div id="session" class="session"></div>
+    </div>
+</header>
+
+<main class="admin-main">
+
+    <section id="login-view" class="login-card" hidden>
+        <h2>Yönetici girişi</h2>
+        <p class="muted">
+            İki yazarı birleştirmek paylaşılan katalogda bir karardır, bir
+            kütüphanenin kendi verisiyle ilgili değil.
+        </p>
+
+        <form id="login-form" class="stack">
+            <label>E-posta <input id="login-email" type="email" required></label>
+            <label>Parola <input id="login-password" type="password" required></label>
+            <button type="submit" class="primary">Giriş</button>
+        </form>
+
+        <div id="login-status" class="status" hidden></div>
+    </section>
+
+    <div id="workspace" hidden>
+        <nav class="tabs" id="tabs">
+            <button type="button" class="tab" data-view="open">Bekleyen</button>
+            <button type="button" class="tab" data-view="merged">Birleştirilmiş</button>
+            <button type="button" class="tab" data-view="kept_separate">Ayrı tutulmuş</button>
+            <button type="button" class="tab" data-view="dismissed">Yoksayılmış</button>
+        </nav>
+
+        <div id="view-status" class="status" hidden></div>
+
+        <div class="note">
+            Öneri <strong>zayıf kanıta</strong> dayanır — benzer yazım, ortak
+            baş harf. Bu yüzden kararı <strong>bir insan</strong> verir: yanlış
+            birleştirme, bir akademisyenin eserini başkasına atfeder ve yapıldıktan
+            sonra kayıtta bunun olduğunu söyleyen hiçbir şey kalmaz.
+        </div>
+
+        <div class="toolbar">
+            <button type="button" id="refresh">Yenile</button>
+            <span class="muted" id="summary"></span>
+        </div>
+
+        <div id="list" class="list"></div>
+    </div>
+
+</main>
+
+<footer>LibraryHub · <a href="/admin">küratör paneli</a> · <a href="/">arama</a></footer>
+
+<script src="/static/otorite.js"></script>
+
+</body>
+
+</html>

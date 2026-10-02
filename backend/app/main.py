@@ -86,6 +86,11 @@ def create_app() -> FastAPI:
     def ingest_workspace():
         return FileResponse("app/static/iceaktarma.html")
 
+    # Names that look alike, waiting for somebody to say whether they are.
+    @application.get("/otorite", include_in_schema=False)
+    def authority_workspace():
+        return FileResponse("app/static/otorite.html")
+
     # Health check endpoint for container orchestration and monitoring.
     @application.get("/health", include_in_schema=False)
     def health():
