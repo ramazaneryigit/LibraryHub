@@ -26,7 +26,7 @@ from ..core.security import as_utc, hash_session_token
 from ..db.models import User, UserSession
 from ..db import OwnerSessionLocal, get_db, tenant_session
 
-__all__ = ["current_session", "current_user", "require_role", "tenant_db"]
+__all__ = ["current_session", "current_user", "export_db", "require_role", "tenant_db"]
 
 
 _UNAUTHORIZED_HEADERS = {"WWW-Authenticate": "Bearer"}
@@ -196,3 +196,37 @@ def owner_db(user: User = Depends(require_admin)):
         yield db
     finally:
         db.close()
+
+
+def export_db(user: User = Depends(current_user)):
+    """The session an export runs on, chosen by who is asking.
+
+    A platform account exports any library and needs the owner credential, because
+    no single tenant can be bound and under the application role the policies would
+    correctly show nothing.
+
+    Library staff export their own, and for them the tenant session is the right
+    answer rather than the weak one: the policies scope it, so a librarian cannot
+    reach another library's holdings whether or not a check in the route remembers
+    to say so. Widening `owner_db` to librarians would have handed out the most
+    powerful session in the application to save writing five lines here.
+    """
+
+    if user.principal_kind == "platform":
+        db = OwnerSessionLocal()
+
+        try:
+            yield db
+        finally:
+            db.close()
+
+        return
+
+    if user.tenant_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="This account is not bound to a library",
+        )
+
+    with tenant_session(user.tenant_id) as db:
+        yield db

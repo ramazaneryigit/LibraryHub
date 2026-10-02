@@ -93,10 +93,18 @@ class MappedRecord:
     control_number: str | None = None
     title: str | None = None
     subtitle: str | None = None
+    original_title: str | None = None
     authors: list[MappedAuthor] = dataclass_field(default_factory=list)
     isbn: list[str] = dataclass_field(default_factory=list)
     issn: list[str] = dataclass_field(default_factory=list)
     language: str | None = None
+    # The publication statement as one rendered string -- "İstanbul : Ağaç
+    # Yayıncılık, 1993." -- alongside its parts where we have them.
+    #
+    # We store the statement as a single column and cannot un-render it, so on the
+    # way out it is written back whole rather than pretending to know where the
+    # place ends and the publisher begins. Splitting it would be guessing.
+    publication_statement: str | None = None
     publication_place: str | None = None
     publisher: str | None = None
     publication_date: str | None = None
@@ -384,6 +392,25 @@ def map_record(record: Record) -> MappedRecord:
     mapped.publication_place, mapped.publisher, mapped.publication_date = (
         _publication(record)
     )
+
+    # `240` is the uniform title -- the original, when the record describes a
+    # translation -- and it is a different thing from `245`, which is what the
+    # reader sees.
+    mapped.original_title = _first(record, "240", "a") or _first(record, "130", "a")
+
+    statement = record.first("260") or record.first("264")
+
+    if statement:
+        parts = [
+            _clean(statement.get("a")),
+            _clean(statement.get("b")),
+            _clean(statement.get("c")),
+        ]
+
+        joined = " ".join(part for part in parts if part)
+
+        if joined:
+            mapped.publication_statement = joined
 
     # `300` is the physical description -- "135 sayfa : resim ; 18 cm." -- and
     # `504` a bibliography note. Both were unread until a real record from a

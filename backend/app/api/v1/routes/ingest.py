@@ -13,12 +13,21 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status as http_status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status as http_status,
+)
 from sqlalchemy.orm import Session
 
 from ....db.models import User
-from ...deps import owner_db, require_role
-from ....services import marc_ingest
+from ...deps import export_db, owner_db, require_role
+from ....core import marc_writer
+from ....services import marc_export, marc_ingest
 
 
 router = APIRouter(prefix="/ingest", tags=["ingestion"])
@@ -95,6 +104,70 @@ def batch(batch_id: str, db: Session = Depends(owner_db), user: User = Depends(r
         "finished_at": row["finished_at"],
         "report": report,
     }
+
+
+@router.get("/export")
+def export_marc(
+    tenant: str | None = Query(default=None, description="tenant id; defaults to your own"),
+    format: str = Query(default="mrc", pattern="^(mrc|marcxml)$"),
+    limit: int = Query(default=10_000, ge=1, le=200_000),
+    db: Session = Depends(export_db),
+    user: User = Depends(require_role("admin", "librarian")),
+):
+    """Give a library its catalogue back.
+
+    This is the endpoint an institution asks about before it hands anything over.
+    Until it existed the answer was "the codec works but there is no button", which
+    is worse than nothing because it sounds like it works.
+
+    The session comes from `export_db`, which gives a platform account the owner
+    credential and gives library staff their own tenant session. So for staff the
+    policies are what confine the export, and the check below is a second line for
+    the platform path, where the owner bypasses them.
+    """
+
+    # A library's staff export their own; the platform exports any, which is how a
+    # migration or a backup is taken.
+    target = tenant or (str(user.tenant_id) if user.tenant_id else None)
+
+    if target is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Which tenant? Pass ?tenant= or sign in as library staff",
+        )
+
+    if user.principal_kind != "platform" and str(user.tenant_id) != str(target):
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="This account may only export its own library",
+        )
+
+    records = list(marc_export.records_for_tenant(db, target, limit=limit))
+
+    if format == "marcxml":
+        body = marc_writer.to_marcxml(
+            [marc_writer.from_mapped(record) for record in records]
+        )
+        media = "application/marcxml+xml"
+        filename = f"libraryhub-{target[:8]}.xml"
+    else:
+        body = marc_writer.to_iso2709(
+            [marc_writer.from_mapped(record) for record in records]
+        )
+        media = "application/marc"
+        filename = f"libraryhub-{target[:8]}.mrc"
+
+    return Response(
+        content=body,
+        media_type=media,
+        headers={
+            # The count travels with the file: a library that receives 940 records
+            # should be able to see that 940 is what it asked for, and not wonder
+            # whether something was dropped.
+            "X-LibraryHub-Records": str(len(records)),
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @router.post("/marc", status_code=http_status.HTTP_201_CREATED)

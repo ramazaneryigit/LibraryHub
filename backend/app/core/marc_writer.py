@@ -247,6 +247,9 @@ def from_mapped(mapped) -> MarcRecord:
 
         fields.append(MarcField("245", "1", "0", title))
 
+    if getattr(mapped, "original_title", None):
+        fields.append(MarcField("240", "1", "0", [("a", mapped.original_title)]))
+
     if mapped.edition_statement:
         fields.append(MarcField("250", " ", " ", [("a", mapped.edition_statement)]))
 
@@ -263,6 +266,11 @@ def from_mapped(mapped) -> MarcRecord:
             publication.append(("c", mapped.publication_date))
 
         fields.append(MarcField("264", " ", "1", publication))
+
+    elif getattr(mapped, "publication_statement", None):
+        # Nothing was separated on the way in, so the statement goes back whole.
+        # Splitting it here would be inventing a place and a publisher.
+        fields.append(MarcField("264", " ", "1", [("a", mapped.publication_statement)]))
 
     for subject in mapped.subjects:
         # Subdivisions were joined with a dash on the way in, and split again here

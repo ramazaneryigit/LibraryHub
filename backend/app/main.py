@@ -86,6 +86,12 @@ def create_app() -> FastAPI:
     def ingest_workspace():
         return FileResponse("app/static/iceaktarma.html")
 
+    # Health check endpoint for container orchestration and monitoring.
+    @application.get("/health", include_in_schema=False)
+    def health():
+        """Minimal health check. Returns 200 if the app is responsive."""
+        return {"status": "healthy", "version": API_VERSION}
+
     return application
 
 
