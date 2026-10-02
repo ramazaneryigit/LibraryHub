@@ -51,6 +51,9 @@ __all__ = [
     "TenantDatabase",
     "User",
     "UserSession",
+    "Role",
+    "Permission",
+    "UserRole",
 ]
 
 CONTROL_SCHEMA = "control"
@@ -117,6 +120,155 @@ class Tenant(Base):
         DateTime(timezone=True),
         default=utcnow,
         nullable=False,
+    )
+
+
+class Role(Base):
+    """Bir rol — adıyla kütüphanede tanımlanan (örn. 'kataloğcu', 'müdür').
+
+    Roller kiracıya bağlıdır: KKÜ'nün 'kataloğcu'su MÜ'nün 'kataloğcu'sünden
+    farklı olabilir. Birbiri arasında hiçbir ilişki yoktur.
+    """
+
+    __tablename__ = "roles"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "name",
+            name="uq_roles_tenant_name",
+        ),
+        {"schema": CONTROL_SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid7,
+    )
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            f"{CONTROL_SCHEMA}.tenants.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+
+
+class Permission(Base):
+    """Bir izin — yapılabilecek bir işlem (örn. 'create_work', 'approve_assertion').
+
+    Global tanımlı, tüm kiracılarda aynı. Yeni izin eklemek SQL değil,
+    kod ve migration'dır.
+    """
+
+    __tablename__ = "permissions"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "code",
+            name="uq_permissions_code",
+        ),
+        {"schema": CONTROL_SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid7,
+    )
+
+    code: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        index=True,
+    )
+
+    label: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+    )
+
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+
+
+class UserRole(Base):
+    """Bir kişi + rol ataması.
+
+    Bir kullanıcı birden fazla role sahip olabilir (örn. bir kiracıda hem
+    kataloğcu hem müdür). Her role atama ayrı satır.
+    """
+
+    __tablename__ = "user_roles"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "role_id",
+            name="uq_user_roles_user_role",
+        ),
+        Index("ix_user_roles_user_id", "user_id"),
+        Index("ix_user_roles_role_id", "role_id"),
+        {"schema": CONTROL_SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid7,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            f"{CONTROL_SCHEMA}.users.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+
+    role_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            f"{CONTROL_SCHEMA}.roles.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+
+    assigned_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            f"{CONTROL_SCHEMA}.users.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
     )
 
     updated_at: Mapped[datetime] = mapped_column(

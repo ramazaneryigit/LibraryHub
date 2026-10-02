@@ -23,10 +23,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..core.security import as_utc, hash_session_token
-from ..db.models import User, UserSession
+from ..db.models import User, UserSession, Role, UserRole, Permission
 from ..db import OwnerSessionLocal, get_db, tenant_session
 
-__all__ = ["current_session", "current_user", "export_db", "require_role", "tenant_db"]
+__all__ = ["current_session", "current_user", "export_db", "require_role", "require_permission", "tenant_db"]
 
 
 _UNAUTHORIZED_HEADERS = {"WWW-Authenticate": "Bearer"}
@@ -129,6 +129,50 @@ def require_role(*allowed: str):
                 ),
             )
 
+        return user
+
+    return dependency
+
+
+def require_permission(permission_code: str):
+    """Dependency factory: check if user has a specific permission.
+    
+    İzin kontrol eder — user-role-permission zinciri izlenerek.
+    Platform admin her izne sahiptir.
+    """
+
+    def dependency(user: User = Depends(current_user), db: Session = Depends(get_db)) -> User:
+        # Platform admin her şey yapabilir
+        if user.principal_kind == "platform" and user.role == "admin":
+            return user
+        
+        # Kiracıya bağlı kullanıcı — rolleri kontrol et
+        if user.tenant_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account is not attached to a tenant",
+            )
+        
+        # User'ın rollerini ve bu rollerin izinlerini kontrol et
+        has_permission = db.scalar(
+            select(Permission).where(
+                Permission.code == permission_code,
+                Permission.id.in_(
+                    select(Role).distinct().where(
+                        Role.id.in_(
+                            select(UserRole.role_id).where(UserRole.user_id == user.id)
+                        )
+                    ).select_entity_from(Role)
+                ),
+            ).exists().correlate(None)
+        )
+        
+        if not has_permission:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission '{permission_code}' is required for this action",
+            )
+        
         return user
 
     return dependency
