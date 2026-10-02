@@ -51,7 +51,6 @@ def agent_for(executor, name: str, agent_type: str):
 
     entity_id = uuid7()
     kind = "ORGANIZATION" if agent_type == "publisher" else "PERSON"
-
     # `entities` before its subtype in every case. The triggers are deferred, but
     # this order has already cost one debugging session (§0.19).
     executor.execute(
@@ -79,6 +78,20 @@ def agent_for(executor, name: str, agent_type: str):
             ),
             {"id": entity_id, "name": name},
         )
+
+    # The queue rows for this name were written before the entity existed, so the
+    # link is made now. Without it a merge has nothing to merge: the decision would
+    # have to be re-resolved by name, which is the matching that produced the
+    # suggestion in the first place.
+    executor.execute(
+        text(
+            "update public.authority_candidates "
+            "set incoming_entity_id = :id "
+            "where incoming_name = :name and status = 'open' "
+            "  and incoming_entity_id is null"
+        ),
+        {"id": entity_id, "name": name},
+    )
 
     return entity_id
 
@@ -177,7 +190,8 @@ def list_queue(executor, *, status: str = "open", limit: int = 100) -> list[Mapp
 
     return executor.execute(
         text(
-            "select a.id, a.entity_type, a.incoming_name, a.candidate_name, "
+            "select a.id, a.entity_type, a.incoming_name, a.incoming_entity_id, "
+            "       a.candidate_name, "
             "       a.candidate_entity_id, a.score, a.reason, a.status, "
             "       a.created_at, "
             "       s.name as source_name "

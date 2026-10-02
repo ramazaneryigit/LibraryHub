@@ -16,6 +16,7 @@ from .routes import (
     admin,
     assertions,
     auth,
+    authority,
     classifications,
     collective_agents,
     concepts,
@@ -46,6 +47,7 @@ api_router.include_router(auth.router)
 api_router.include_router(admin.router)
 api_router.include_router(tenant.router)
 api_router.include_router(assertions.router)
+api_router.include_router(authority.router)
 api_router.include_router(isbn.router)
 api_router.include_router(publisher.router)
 api_router.include_router(academic.router)

@@ -67,6 +67,7 @@ class AuthorityCandidate(Base):
             text("score DESC"),
             postgresql_where=text("status = 'open'"),
         ).ddl_if(dialect="postgresql"),
+        Index("ix_authority_candidates_incoming_entity", "incoming_entity_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -88,6 +89,18 @@ class AuthorityCandidate(Base):
     )
 
     candidate_name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # The record the incoming name produced. Filled in after the fact, because the
+    # queue row is written before the entity exists -- `resolve_agent` records the
+    # resemblance and returns nothing, and the caller creates the entity next.
+    #
+    # Without it a merge has nothing to merge: the decision would have to be
+    # re-resolved by name, which is the matching that produced the suggestion.
+    incoming_entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"),
+        nullable=True,
+        type_=Uuid,
+    )
 
     score: Mapped[float] = mapped_column(REAL, nullable=False)
     strength: Mapped[str] = mapped_column(Text, nullable=False)
