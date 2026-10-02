@@ -11,7 +11,7 @@ from ..base import Base, utcnow
 from ...core.ids import uuid7
 
 
-__all__ = ["EntityRelation", "RelationPredicate", "RelationPredicateConstraint"]
+__all__ = ["EntityRelation", "RelationPredicate", "RelationPredicateConstraint", "EntityRelationQualifier"]
 
 
 class EntityRelation(Base):
@@ -157,6 +157,83 @@ class RelationPredicateConstraint(Base):
         nullable=False,
     )
 
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+
+
+class EntityRelationQualifier(Base):
+    """Niteleme bilgisi — makale için cilt/sayı/sayfa/yıl gibi.
+
+    Bir ilişkinin (örneğin makale ↔ dergi 'is_part_of'ilişkisinin) bibliyografik
+    nitelemesidir. Bağımsız bir varlık değil, ilişkinin özelliğidir.
+
+    Örnek: Makale X dergide "Cilt 25, Sayı 3, s. 412-431" yayımlandı:
+        entity_relation = (article.id, 'is_part_of', journal.id)
+        qualifier.volume = '25'
+        qualifier.issue = '3'
+        qualifier.pages = '412-431'
+        qualifier.year = 2024
+    """
+
+    __tablename__ = "entity_relation_qualifiers"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "entity_relation_id",
+            name="uq_entity_relation_qualifier_per_relation",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid7,
+    )
+
+    entity_relation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("entity_relation.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Cilt numarası (süreli yayınlar için)
+    volume: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    # Sayı numarası (dergi, gazete vb.)
+    issue: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    # Sayfalar (sayfa aralığı veya tek sayfa)
+    pages: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    # Yayım yılı (opsiyonel; sonra expression_manifestation'dan alınabilir)
+    year: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    # Ek nitelemeler (DOI, madde numarası, bölüm vb.)
+    article_number: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    doi: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
+
+    # Oluşturulma tarihi
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utcnow,

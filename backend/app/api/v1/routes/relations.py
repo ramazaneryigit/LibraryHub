@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 
 from ...deps import require_staff
 from ....db import get_db
-from ....db.models import Entity, EntityRelation
+from ....db.models import Entity, EntityRelation, EntityRelationQualifier
 from ....services.entity_merge import resolve_canonical_entity_id
-from ....schemas.relations import EntityRelationCreate
+from ....schemas.relations import EntityRelationCreate, EntityRelationQualifierCreate, EntityRelationQualifierResponse
 
 
 router = APIRouter(
@@ -262,3 +262,66 @@ def create_entity_relation(
         "entity_id": str(canonical_subject_entity_id),
         "relations": relations,
     }
+
+
+# Qualifier endpoints
+@router.post("/qualifiers", status_code=201, dependencies=[Depends(require_staff)])
+def create_qualifier(
+    payload: EntityRelationQualifierCreate,
+    db: Session = Depends(get_db),
+):
+    """Makale nitelemesi oluştur (cilt, sayı, sayfa, yıl)."""
+
+    relation = db.get(EntityRelation, payload.entity_relation_id)
+    if not relation:
+        raise HTTPException(
+            status_code=404,
+            detail="Entity relation not found",
+        )
+
+    # Aynı ilişki için bir qualifier varsa, hata ver
+    existing = db.query(EntityRelationQualifier).filter(
+        EntityRelationQualifier.entity_relation_id == payload.entity_relation_id
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="Qualifier already exists for this relation",
+        )
+
+    qualifier = EntityRelationQualifier(
+        entity_relation_id=payload.entity_relation_id,
+        volume=payload.volume,
+        issue=payload.issue,
+        pages=payload.pages,
+        year=payload.year,
+        article_number=payload.article_number,
+        doi=payload.doi,
+    )
+
+    db.add(qualifier)
+    db.commit()
+    db.refresh(qualifier)
+
+    return EntityRelationQualifierResponse.model_validate(qualifier)
+
+
+@router.get("/qualifiers/{entity_relation_id}")
+def get_qualifier(
+    entity_relation_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """İlişki için nitelemesi getir."""
+
+    qualifier = db.query(EntityRelationQualifier).filter(
+        EntityRelationQualifier.entity_relation_id == entity_relation_id
+    ).first()
+
+    if not qualifier:
+        raise HTTPException(
+            status_code=404,
+            detail="Qualifier not found",
+        )
+
+    return EntityRelationQualifierResponse.model_validate(qualifier)
