@@ -24,9 +24,9 @@ from sqlalchemy.orm import Session
 
 from ..core.security import as_utc, hash_session_token
 from ..db.models import User, UserSession, Role, UserRole, Permission
-from ..db import OwnerSessionLocal, get_db, tenant_session
+from ..db import OwnerSessionLocal, get_db, tenant_session, admin_session, principal_session
 
-__all__ = ["current_session", "current_user", "export_db", "require_role", "require_permission", "tenant_db"]
+__all__ = ["current_session", "current_user", "export_db", "require_role", "require_permission", "tenant_db", "admin_db", "principal_db"]
 
 
 _UNAUTHORIZED_HEADERS = {"WWW-Authenticate": "Bearer"}
@@ -273,4 +273,26 @@ def export_db(user: User = Depends(current_user)):
         )
 
     with tenant_session(user.tenant_id) as db:
+        yield db
+
+
+def admin_db(user: User = Depends(require_admin)):
+    """Admin session: bypass RLS on field_assertions, access control plane."""
+    with admin_session() as db:
+        yield db
+
+
+def principal_db(user: User = Depends(current_user)):
+    """Session scoped to a principal (paydaş) for field_assertions writes.
+    
+    Publisher → source_system_id = publisher_collective_agents.entity_id
+    Academician → source_system_id = orcid-based source_system
+    ISBN agency → source_system_id = isbn_agency source_system
+    Vendor → source_system_id = vendor source_system
+    """
+    
+    is_admin = user.principal_kind == "platform" and user.role == "admin"
+    source_system_id = user.subject_entity_id if user.principal_kind != "tenant_staff" else None
+    
+    with principal_session(user.id, source_system_id=source_system_id, is_admin=is_admin) as db:
         yield db

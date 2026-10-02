@@ -25,6 +25,8 @@ __all__ = [
     "TENANT_SETTING",
     "get_db",
     "tenant_session",
+    "admin_session",
+    "principal_session",
 ]
 
 
@@ -38,6 +40,8 @@ def get_db():
 
 # Must match the policies created in migration a3b6d9f47e85.
 TENANT_SETTING = "libraryhub.tenant_id"
+ADMIN_MODE_SETTING = "libraryhub.admin_mode"
+USER_SOURCE_SYSTEM_SETTING = "libraryhub.user_source_system_id"
 
 # The role a tenant-scoped transaction runs as.
 #
@@ -96,6 +100,85 @@ def tenant_session(tenant_id: UUID):
             text("select set_config(:name, :value, true)"),
             {"name": TENANT_SETTING, "value": str(tenant_id)},
         )
+
+    if is_postgres:
+        event.listen(db, "after_begin", _scope_session)
+
+    try:
+        yield db
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        if is_postgres:
+            event.remove(db, "after_begin", _scope_session)
+
+        db.close()
+
+
+@contextmanager
+def admin_session():
+    """Yield a session in admin mode (bypass RLS).
+    
+    Platform administrator'lar için — tüm field_assertions'ı okuyabilir/yazabilir.
+    """
+
+    db = SessionLocal()
+    bind = db.get_bind()
+    is_postgres = bind is not None and bind.dialect.name == "postgresql"
+
+    def _scope_session(session, transaction, connection):
+        connection.execute(
+            text("select set_config(:name, :value, true)"),
+            {"name": ADMIN_MODE_SETTING, "value": "true"},
+        )
+
+    if is_postgres:
+        event.listen(db, "after_begin", _scope_session)
+
+    try:
+        yield db
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        if is_postgres:
+            event.remove(db, "after_begin", _scope_session)
+
+        db.close()
+
+
+@contextmanager
+def principal_session(user_id: UUID, source_system_id: UUID | None = None, is_admin: bool = False):
+    """Yield a session scoped to a principal (paydaş).
+    
+    field_assertions RLS'ini uygulamak için:
+    - source_system_id: kullanıcının kendi source_system (yayınevi, ISBN ajansı, vb.)
+    - is_admin: admin ise tüm source_system'lara yazabilir
+    """
+
+    db = SessionLocal()
+    bind = db.get_bind()
+    is_postgres = bind is not None and bind.dialect.name == "postgresql"
+
+    def _scope_session(session, transaction, connection):
+        if is_admin:
+            connection.execute(
+                text("select set_config(:name, :value, true)"),
+                {"name": ADMIN_MODE_SETTING, "value": "true"},
+            )
+        
+        if source_system_id:
+            connection.execute(
+                text("select set_config(:name, :value, true)"),
+                {"name": USER_SOURCE_SYSTEM_SETTING, "value": str(source_system_id)},
+            )
 
     if is_postgres:
         event.listen(db, "after_begin", _scope_session)
