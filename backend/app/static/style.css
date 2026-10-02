@@ -16,41 +16,41 @@
 }
 
 :root {
-    /* Renk: koyu lacivert ana, sıcak nötr yüzeyler */
-    --primary-900: #0b2b47;
-    --primary-800: #10395c;
-    --primary-700: #14476f;
-    --primary-600: #1a5a8a;
-    --primary-500: #2472ab;
-    --primary-400: #4a90c2;
-    --primary-100: #e3eef7;
-    --primary-50: #f1f7fc;
+    /* One palette shared by catalogue, workspaces and platform overview. */
+    --primary-900: #183c32;
+    --primary-800: #285c49;
+    --primary-700: #356e57;
+    --primary-600: #47758a;
+    --primary-500: #5c9077;
+    --primary-400: #88aa97;
+    --primary-100: #e8f0e9;
+    --primary-50: #eff3ef;
 
     --primary: var(--primary-800);
     --primary-light: var(--primary-500);
 
-    --background: #f4f6f9;
+    --background: #f3f5f1;
     --surface: #ffffff;
-    --surface-2: #fafbfd;
+    --surface-2: #f8faf7;
 
-    --text: #16202b;
-    --text-muted: #5b6878;
-    --text-subtle: #8592a3;
+    --text: #1b2924;
+    --text-muted: #66756e;
+    --text-subtle: #8a9791;
 
-    --border: #e2e7ee;
-    --border-strong: #cfd7e2;
+    --border: #dce3dc;
+    --border-strong: #c9d4cc;
 
-    --success: #14794a;
-    --success-bg: #e7f5ee;
-    --warning: #a9610a;
-    --warning-bg: #fdf3e3;
-    --danger: #b3261e;
-    --danger-bg: #fdeceb;
+    --success: #285c49;
+    --success-bg: #e8f0e9;
+    --warning: #a67528;
+    --warning-bg: #f6f0e2;
+    --danger: #c45f49;
+    --danger-bg: #f8ece7;
 
-    --radius-sm: 6px;
-    --radius: 10px;
-    --radius-lg: 14px;
-    --radius-xl: 20px;
+    --radius-sm: 4px;
+    --radius: 6px;
+    --radius-lg: 8px;
+    --radius-xl: 8px;
     --radius-pill: 999px;
 
     --shadow-xs: 0 1px 2px rgba(16, 32, 48, 0.05);
@@ -58,7 +58,22 @@
     --shadow-md: 0 4px 12px rgba(16, 32, 48, 0.08), 0 1px 3px rgba(16, 32, 48, 0.04);
     --shadow-lg: 0 12px 32px rgba(16, 32, 48, 0.12), 0 2px 8px rgba(16, 32, 48, 0.05);
 
-    --ring: 0 0 0 3px rgba(36, 114, 171, 0.28);
+    --ring: 0 0 0 3px rgba(71, 117, 138, 0.24);
+
+    --ink: var(--text);
+    --muted: var(--text-muted);
+    --faint: var(--text-subtle);
+    --paper: var(--background);
+    --white: var(--surface);
+    --line: var(--border);
+    --green: var(--primary-800);
+    --green-deep: var(--primary-900);
+    --green-soft: var(--primary-100);
+    --coral: #c45f49;
+    --coral-soft: #f8ece7;
+    --blue: #47758a;
+    --blue-soft: #e9f0f3;
+    --gold: #bd8a35;
 
     --font-sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial,
         sans-serif;
@@ -79,7 +94,8 @@ body {
 
 h1, h2, h3, h4 {
     line-height: 1.25;
-    letter-spacing: -0.015em;
+    letter-spacing: 0;
+    font-family: Georgia, "Times New Roman", serif;
     margin: 0;
 }
 
@@ -139,7 +155,7 @@ a:hover {
     justify-content: center;
     font-weight: 700;
     font-size: 17px;
-    letter-spacing: 0.02em;
+    letter-spacing: 0;
     box-shadow: var(--shadow-sm);
 }
 
@@ -223,7 +239,7 @@ a:hover {
 .hero h2 {
     font-size: clamp(28px, 4vw, 42px);
     margin: 0 0 10px;
-    letter-spacing: -0.03em;
+    letter-spacing: 0;
 }
 
 .hero > p {
@@ -388,7 +404,7 @@ a:hover {
     display: inline-block;
     font-size: 11px;
     font-weight: 700;
-    letter-spacing: 0.09em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--primary-600);
     background: var(--primary-50);
@@ -662,7 +678,7 @@ a:hover {
 .language-badge {
     font-size: 12px;
     font-weight: 700;
-    letter-spacing: 0.05em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: #fff;
     background: var(--primary-600);
@@ -683,7 +699,7 @@ a:hover {
     font-size: 15px;
     color: var(--primary-700);
     margin: 0 0 6px;
-    letter-spacing: 0.02em;
+    letter-spacing: 0;
     text-transform: uppercase;
 }
 
@@ -703,7 +719,7 @@ a:hover {
     font-weight: 700;
     color: var(--primary-700);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0;
     margin-bottom: 8px;
 }
 
@@ -804,7 +820,7 @@ a:hover {
 .relation-label {
     font-size: 12px;
     font-weight: 700;
-    letter-spacing: 0.05em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--text-subtle);
 }

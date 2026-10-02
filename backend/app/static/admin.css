@@ -111,7 +111,7 @@
     gap: 5px;
     font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.03em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--text-subtle);
 }
@@ -228,7 +228,7 @@ code {
     gap: 5px;
     font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.03em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--text-subtle);
 }
@@ -333,7 +333,7 @@ code {
     padding: 3px 11px;
     font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.02em;
+    letter-spacing: 0;
     color: var(--text-muted);
     background: var(--surface-2);
     border: 1px solid var(--border-strong);
@@ -410,7 +410,7 @@ code {
 .detail dt {
     font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.03em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--text-subtle);
     padding-top: 2px;
@@ -453,7 +453,7 @@ table.changes tbody tr:hover td {
 table.changes th {
     font-size: 11.5px;
     font-weight: 700;
-    letter-spacing: 0.06em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--text-subtle);
     background: var(--surface-2);
@@ -564,7 +564,7 @@ table.changes td.now {
 .summary-label {
     font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--text-subtle);
     margin-top: 5px;

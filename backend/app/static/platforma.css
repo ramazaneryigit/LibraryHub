@@ -1,20 +1,4 @@
 :root {
-    color-scheme: light;
-    --ink: #1b2924;
-    --muted: #66756e;
-    --faint: #8a9791;
-    --paper: #f3f5f1;
-    --white: #fff;
-    --line: #dce3dc;
-    --green: #285c49;
-    --green-deep: #183c32;
-    --green-soft: #e8f0e9;
-    --coral: #c45f49;
-    --coral-soft: #f8ece7;
-    --blue: #47758a;
-    --blue-soft: #e9f0f3;
-    --gold: #bd8a35;
-    --radius: 6px;
     --rail-width: 246px;
 }
 
