@@ -69,17 +69,19 @@ edebilirsiniz"* ✓.
 
 ---
 
-### 5. Aramada yüzeyleme (facet) ve sayfalama
+### 5. Aramada yüzeyleme (facet) ve sayfalama — API TAMAMLANDI
 
-Bugün `/search` yalnızca `limit` ve `truncated` veriyor ✗. Toplu katalogda asıl
-soru *"hangi kütüphanede"* ✓ — yani **kütüphaneye, yıla, dile, konuya, türe göre
-süzme** gerekir ✓.
+`GET /search` artık `total`, `next_cursor`, `has_more` ve facet sayaçları döndürür.
+Keyset cursor eşleşme skoru ve work kimliğine göre kararlıdır; sorgu veya
+filtreler değiştiğinde yeniden kullanılamaz. Mevcut `count`, `limit` ve
+`truncated` alanları geriye uyumluluk için korunur.
 
-**Ne gerekir:** facet sayaçları + gerçek sayfalama (imleç ✓) + sıralama seçenekleri.
+Desteklenen filtreler ve facet grupları: `work_type`, `language`, `year`,
+`library`, `subject`. Facet sayaçları sorgunun tam eşleşme kümesinden hesaplanır;
+cursor yalnızca filtrelenmiş sonuç sayfasını ilerletir.
 
-**Neden çekirdek:** facet'siz bir toplu katalog bir **arama kutusudur**, bir
-katalog değil ✗. Ve indeks artık bunu ucuz kılıyor ✓ — `search_documents`
-üzerinde `GROUP BY` yeterli ✓.
+**Kalan:** kamu kataloğunda facet seçim kontrolleri ve sonraki sayfayı yükleyen
+arayüz. API ile görsel yüzeyleme ayrı adımlar olarak tutulur.
 
 ---
 

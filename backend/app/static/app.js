@@ -194,7 +194,11 @@ function renderWork(work) {
             </div>
 
             <h3>
-                ${escapeHtml(work.canonical_title)}
+                <button
+                    type="button"
+                    class="detail-button record-title"
+                    data-work-id="${escapeHtml(work.entity_id)}"
+                >${escapeHtml(work.canonical_title)}</button>
             </h3>
 
             ${

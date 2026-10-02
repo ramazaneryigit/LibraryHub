@@ -96,16 +96,42 @@ def agent_for(executor, name: str, agent_type: str):
     return entity_id
 
 
-def find_existing(executor, name: str, limit: int = 200) -> list[Mapping]:
-    """People and organizations the catalogue already has, for `suggest` to sort.
+def find_existing(
+    executor,
+    name: str,
+    limit: int = 200,
+    *,
+    agent_type: str | None = None,
+) -> list[Mapping]:
+    """Existing authority records, optionally restricted to the incoming type.
 
-    Reads both tables into one list because `suggest` does not care which a name
-    belongs to -- a publisher and a person are matched the same way, and returning
-    them separately would push that decision back to every caller.
+    Person names must never resolve to publishers or institutions merely because
+    their spellings match. The unfiltered form remains available to existing
+    callers that explicitly need the combined authority list.
     """
 
-    rows = executor.execute(
-        text(
+    if agent_type == "publisher":
+        statement = text(
+            "select ca.entity_id, ca.canonical_name as name, "
+            "       null::text as orcid, null::text as dates "
+            "from public.collective_agents ca "
+            "where ca.agent_type = :agent_type "
+            "limit :limit"
+        )
+        parameters = {"agent_type": agent_type, "limit": limit}
+    elif agent_type is not None:
+        statement = text(
+            "select p.entity_id, p.canonical_name as name, "
+            "       (select i.value from public.identifiers i "
+            "         where i.entity_id = p.entity_id and i.scheme = 'ORCID' "
+            "         limit 1) as orcid, "
+            "       null::text as dates "
+            "from public.persons p "
+            "limit :limit"
+        )
+        parameters = {"limit": limit}
+    else:
+        statement = text(
             "select p.entity_id, p.canonical_name as name, "
             "       (select i.value from public.identifiers i "
             "         where i.entity_id = p.entity_id and i.scheme = 'ORCID' "
@@ -116,9 +142,10 @@ def find_existing(executor, name: str, limit: int = 200) -> list[Mapping]:
             "select ca.entity_id, ca.canonical_name, null, null "
             "from public.collective_agents ca "
             "limit :limit"
-        ),
-        {"limit": limit},
-    ).mappings().all()
+        )
+        parameters = {"limit": limit}
+
+    rows = executor.execute(statement, parameters).mappings().all()
 
     return [
         {
@@ -252,7 +279,7 @@ def resolve_agent(
 
     from ..core.authority import suggest
 
-    existing = find_existing(executor, name)
+    existing = find_existing(executor, name, agent_type=agent_type)
     candidates = suggest(name, existing)
 
     deciding = [candidate for candidate in candidates if candidate.decides]

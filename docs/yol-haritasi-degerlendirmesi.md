@@ -143,7 +143,7 @@ Ve haritanın cevabı **daha çok yetenek** ✗. Bu, kanıtlanmamış yüzeyi
 | **5** | **Ödünç modülü** (patron/loan/reservation ✓) | ~1 hafta | Gordon'un tasarımı **alınır** ✓ |
 | **6** | **OAI-PMH hasat edici** → DergiPark | ~3 gün | Makalelerin girişi |
 | **7** | **OAI-PMH sunucu + `oai_dc`** | ~2 gün | Hasat edilebilirlik |
-| **8** | **Facet + sayfalama** (kendi indeksimizde ✓) | ~1 gün | OpenSearch **değil** ✗ |
+| **8** | **Facet + cursor sayfalama API'si** | ✅ API tamamlandı | OpenSearch **değil**; arayüz sonraki iş |
 | **9** | **Analytics snapshot + dashboard** | ~3 gün | Gordon'un tasarımı **alınır** ✓ |
 | **10** | **Webhook** | ~3 gün | Gordon'un tasarımı **alınır** ✓ |
 | **11** | **Operasyon**: yedek provası, DR, monitoring, hız sınırı, tombstone | ~1 hafta | **Gerçek yükten önce** ✓ |

@@ -28,6 +28,10 @@ See docs/architecture-v2.md §0.31.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+import math
 import uuid
 from typing import Any, Iterable, Mapping
 
@@ -40,10 +44,13 @@ from ..core.text import normalize_text
 
 __all__ = [
     "consume",
+    "decode_cursor",
     "documents",
+    "encode_cursor",
     "index",
     "reindex",
     "search",
+    "search_page",
     "stats",
 ]
 
@@ -494,33 +501,266 @@ def reindex(executor) -> int:
     return index(executor, entity_ids)
 
 
-def search(executor, probe: str, limit: int = 50) -> list:
-    """Works whose documents match, most specific first.
+MATCHED_WORKS = """
+select unnest(d.work_ids) as work_id,
+       max(similarity(d.body, :probe)) as score
+from public.search_documents d
+where d.body like :pattern
+group by 1
+"""
 
-    Matching an entity's own document and resolving through `work_ids` is what
-    lets a single index answer "who wrote this" and "what is this called"
-    without the work repeating its authors.
-    """
+
+FILTERED_WORKS = """
+select m.work_id, m.score
+from matched m
+join public.works w on w.entity_id = m.work_id
+where (cast(:work_type as text) is null or w.work_type = cast(:work_type as text))
+  and (
+      cast(:language as text) is null
+      or exists (
+          select 1
+          from public.work_expression we
+          join public.expressions e on e.entity_id = we.expression_entity_id
+          where we.work_entity_id = m.work_id
+            and e.language = cast(:language as text)
+      )
+  )
+  and (
+      cast(:year as text) is null
+      or exists (
+          select 1
+          from public.work_expression we
+          join public.expression_manifestation em
+            on em.expression_entity_id = we.expression_entity_id
+          join public.manifestations manifestation
+            on manifestation.entity_id = em.manifestation_entity_id
+          where we.work_entity_id = m.work_id
+            and manifestation.publication_date ~ '^[0-9]{4}'
+            and left(manifestation.publication_date, 4) = cast(:year as text)
+      )
+  )
+  and (
+      cast(:library_id as uuid) is null
+      or exists (
+          select 1
+          from public.work_expression we
+          join public.expression_manifestation em
+            on em.expression_entity_id = we.expression_entity_id
+          join public.holdings_compat h
+            on h.manifestation_entity_id = em.manifestation_entity_id
+          where we.work_entity_id = m.work_id
+            and h.tenant_id = cast(:library_id as uuid)
+      )
+  )
+  and (
+      cast(:subject_id as uuid) is null
+      or exists (
+          select 1
+          from public.entity_relation er
+          where er.subject_entity_id = m.work_id
+            and er.object_entity_id = cast(:subject_id as uuid)
+            and er.predicate = 'has_subject'
+      )
+  )
+"""
+
+
+FACETS = """
+with matched as (
+    {matched_works}
+), facets as (
+    select 'work_type' as facet, w.work_type::text as value,
+           w.work_type::text as label, count(distinct m.work_id) as count
+    from matched m
+    join public.works w on w.entity_id = m.work_id
+    where w.work_type is not null and btrim(w.work_type) <> ''
+    group by w.work_type
+
+    union all
+
+    select 'language', e.language::text, e.language::text,
+           count(distinct m.work_id)
+    from matched m
+    join public.work_expression we on we.work_entity_id = m.work_id
+    join public.expressions e on e.entity_id = we.expression_entity_id
+    where e.language is not null and btrim(e.language) <> ''
+    group by e.language
+
+    union all
+
+    select 'year', left(manifestation.publication_date, 4),
+           left(manifestation.publication_date, 4), count(distinct m.work_id)
+    from matched m
+    join public.work_expression we on we.work_entity_id = m.work_id
+    join public.expression_manifestation em
+      on em.expression_entity_id = we.expression_entity_id
+    join public.manifestations manifestation
+      on manifestation.entity_id = em.manifestation_entity_id
+    where manifestation.publication_date ~ '^[0-9]{4}'
+    group by left(manifestation.publication_date, 4)
+
+    union all
+
+    select 'library', h.tenant_id::text, t.display_name,
+           count(distinct m.work_id)
+    from matched m
+    join public.work_expression we on we.work_entity_id = m.work_id
+    join public.expression_manifestation em
+      on em.expression_entity_id = we.expression_entity_id
+    join public.holdings_compat h
+      on h.manifestation_entity_id = em.manifestation_entity_id
+    join control.tenants t on t.id = h.tenant_id
+    group by h.tenant_id, t.display_name
+
+    union all
+
+    select 'subject', c.entity_id::text, c.preferred_label,
+           count(distinct m.work_id)
+    from matched m
+    join public.entity_relation er
+      on er.subject_entity_id = m.work_id and er.predicate = 'has_subject'
+    join public.concepts c on c.entity_id = er.object_entity_id
+    group by c.entity_id, c.preferred_label
+)
+select facet, value, label, count
+from facets
+order by facet, count desc, label, value
+""".replace("{matched_works}", MATCHED_WORKS)
+
+
+def _cursor_context(normalized: str, filters: Mapping[str, Any]) -> str:
+    rendered = json.dumps(
+        [normalized, {key: str(value) if value is not None else None for key, value in filters.items()}],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    return hashlib.sha256(rendered.encode("utf-8")).hexdigest()[:24]
+
+
+def encode_cursor(score: float, work_id, context: str = "") -> str:
+    payload = json.dumps(
+        {"score": float(score), "work_id": str(work_id), "context": context},
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+
+
+def decode_cursor(cursor: str, context: str = "") -> tuple[float, uuid.UUID]:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
+        score = float(payload["score"])
+        work_id = uuid.UUID(payload["work_id"])
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+        raise ValueError("Invalid search cursor") from error
+
+    if not math.isfinite(score):
+        raise ValueError("Invalid search cursor score")
+
+    if payload.get("context") != context:
+        raise ValueError("Search cursor does not match this query and its filters")
+
+    return score, work_id
+
+
+def search_page(
+    executor,
+    probe: str,
+    *,
+    limit: int = 50,
+    cursor: str | None = None,
+    work_type: str | None = None,
+    language: str | None = None,
+    year: str | None = None,
+    library_id=None,
+    subject_id=None,
+) -> dict:
+    """One stable keyset page, its exact total, and facets for the query."""
 
     normalized = normalize_text(probe)
 
     if not normalized:
-        return []
+        return {
+            "work_ids": [],
+            "total": 0,
+            "has_more": False,
+            "next_cursor": None,
+            "facets": {name: [] for name in ("work_type", "language", "year", "library", "subject")},
+        }
 
-    rows = executor.execute(
+    filters = {
+        "work_type": work_type,
+        "language": language,
+        "year": year,
+        "library_id": library_id,
+        "subject_id": subject_id,
+    }
+    context = _cursor_context(normalized, filters)
+    cursor_values = decode_cursor(cursor, context) if cursor else (None, None)
+    parameters = {
+        "probe": normalized,
+        "pattern": f"%{normalized}%",
+        **filters,
+    }
+
+    cte = f"with matched as ({MATCHED_WORKS}), filtered as ({FILTERED_WORKS}) "
+    total = executor.execute(
+        text(cte + "select count(*) from filtered"),
+        parameters,
+    ).scalar() or 0
+
+    facet_rows = executor.execute(text(FACETS), parameters).mappings().all()
+    facets = {name: [] for name in ("work_type", "language", "year", "library", "subject")}
+
+    for row in facet_rows:
+        facets[row["facet"]].append({
+            "value": row["value"],
+            "label": row["label"],
+            "count": row["count"],
+        })
+
+    page_rows = executor.execute(
         text(
-            "select unnest(work_ids) as work_id, "
-            "       max(similarity(body, :probe)) as score "
-            "from public.search_documents "
-            "where body like :pattern "
-            "group by 1 "
-            "order by 2 desc, 1 "
-            "limit :limit"
+            cte
+            + "select f.work_id, f.score from filtered f "
+            + "where (cast(:cursor_score as double precision) is null "
+            + "   or f.score < cast(:cursor_score as double precision) "
+            + "   or (f.score = cast(:cursor_score as double precision) "
+            + "       and f.work_id > cast(:cursor_work_id as uuid))) "
+            + "order by f.score desc, f.work_id "
+            + "limit :page_limit"
         ),
-        {"probe": normalized, "pattern": f"%{normalized}%", "limit": limit},
+        {
+            **parameters,
+            "cursor_score": cursor_values[0],
+            "cursor_work_id": cursor_values[1],
+            "page_limit": limit + 1,
+        },
     ).all()
 
-    return [row[0] for row in rows]
+    has_more = len(page_rows) > limit
+    page_rows = page_rows[:limit]
+    next_cursor = None
+
+    if has_more and page_rows:
+        last = page_rows[-1]
+        next_cursor = encode_cursor(last[1], last[0], context)
+
+    return {
+        "work_ids": [row[0] for row in page_rows],
+        "total": total,
+        "has_more": has_more,
+        "next_cursor": next_cursor,
+        "facets": facets,
+    }
+
+
+def search(executor, probe: str, limit: int = 50) -> list:
+    """Backward-compatible first-page search for existing internal callers."""
+
+    return search_page(executor, probe, limit=limit)["work_ids"]
 
 
 def stats(executor) -> dict:

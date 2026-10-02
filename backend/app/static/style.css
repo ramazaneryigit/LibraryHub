@@ -545,6 +545,26 @@ a:hover {
     transform: translateX(2px);
 }
 
+.result-card h3 .record-title {
+    margin: 0;
+    padding: 0;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    font: inherit;
+    text-align: left;
+}
+
+.result-card h3 .record-title:hover {
+    color: var(--primary-600);
+    background: transparent;
+    border-color: transparent;
+    text-decoration: underline;
+    transform: none;
+}
+
 /* ------------------------------------------------------------ detay sayfası */
 
 .detail-page {

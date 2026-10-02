@@ -121,6 +121,12 @@ def search_by_concept(
 def search(
     q: str = Query(min_length=1, max_length=500),
     limit: int = Query(default=50, ge=1, le=200),
+    cursor: str | None = Query(default=None, max_length=256),
+    work_type: str | None = Query(default=None, max_length=50),
+    language: str | None = Query(default=None, max_length=50),
+    year: str | None = Query(default=None, pattern="^[0-9]{4}$"),
+    library_id: UUID | None = Query(default=None),
+    subject_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     # `min_length=1` lets a single space through, and the old code then built the
@@ -136,7 +142,8 @@ def search(
         )
     probe = q.strip()
 
-    # Candidates come from the derived index, not from a twenty-condition join.
+    # Candidates and facets come from the derived index, not from a
+    # twenty-condition join.
     #
     # That join walked works, agents, nomens, identifiers, subjects, expressions,
     # manifestations, publishers and copies in one statement and matched each
@@ -154,7 +161,25 @@ def search(
     #
     # Matching is on the normalized body, which is why `Ayse` finds `Ayşe`: the
     # same normalization the previous query was already applying to names.
-    candidate_ids = search_index.search(db, probe, limit=limit)
+    try:
+        page = search_index.search_page(
+            db,
+            probe,
+            limit=limit,
+            cursor=cursor,
+            work_type=work_type,
+            language=language,
+            year=year,
+            library_id=library_id,
+            subject_id=subject_id,
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+
+    candidate_ids = page["work_ids"]
 
     results = []
     seen_work_ids = set()
@@ -179,12 +204,18 @@ def search(
     return {
         "query": q,
         "count": len(results),
+        "total": page["total"],
         "limit": limit,
-        # The index caps at `limit` before duplicates are collapsed, so a full
-        # page is the honest signal that more may exist. Real pagination needs
-        # the Search Plane (docs/architecture-v2.md §9); until then the client
-        # is told the result set was cut rather than being left to assume it
-        # saw everything.
-        "truncated": len(candidate_ids) >= limit,
+        "truncated": page["has_more"],
+        "has_more": page["has_more"],
+        "next_cursor": page["next_cursor"],
+        "facets": page["facets"],
+        "filters": {
+            "work_type": work_type,
+            "language": language,
+            "year": year,
+            "library_id": str(library_id) if library_id else None,
+            "subject_id": str(subject_id) if subject_id else None,
+        },
         "results": results,
     }
