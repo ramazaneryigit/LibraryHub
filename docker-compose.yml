@@ -68,6 +68,26 @@ services:
     volumes:
       - ./backend:/app
 
+    healthcheck:
+      # `curl` is not in python:3.12-slim -- measured, not assumed -- so this would
+      # have failed on every run and marked a working container unhealthy. Python
+      # is in the image, so it asks the question instead.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,6 +122,16 @@ services:
 
     volumes:
       - ./backend:/app
+
+    # No healthcheck, and the obvious one would be wrong twice over. `pgrep` is not
+    # in the image either, and even if it were, "a process with this name is
+    # running" is not "the worker is draining the outbox" -- a worker stuck on one
+    # bad row would pass it.
+    #
+    # The honest signal already exists and is measured: the worker logs its outbox
+    # lag every pass, and `run_scale_checks.py` asserts that lag stays under a
+    # threshold and fails when it does not. A healthcheck here would add a second,
+    # weaker answer to a question that already has a good one.
 
     depends_on:
       postgres:
