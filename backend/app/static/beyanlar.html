@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LibraryHub · Beyan kuyruğu</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/admin.css">
+    <link rel="stylesheet" href="/static/beyanlar.css">
+</head>
+<body class="admin assertion-page">
+    <header class="topbar">
+        <div class="brand">
+            <a class="logo" href="/platforma" aria-label="Platform panosu">LH</a>
+            <div>
+                <h1>LibraryHub · Beyan kuyruğu</h1>
+                <p>Alan iddiaları, kaynakları ve küratör kararları</p>
+            </div>
+            <div id="session" class="session"></div>
+        </div>
+    </header>
+
+    <main class="admin-main assertion-main">
+        <section id="login-view" class="login-card" hidden>
+            <h2>Küratör girişi</h2>
+            <p class="muted">Beyanları incelemek ve karara bağlamak için yönetici hesabıyla giriş yapın.</p>
+            <form id="login-form" class="stack">
+                <label>E-posta <input id="login-email" type="email" autocomplete="username" required></label>
+                <label>Parola <input id="login-password" type="password" autocomplete="current-password" required></label>
+                <button type="submit" class="primary">Giriş</button>
+            </form>
+            <div id="login-status" class="status" hidden></div>
+        </section>
+
+        <section id="workspace" hidden>
+            <div class="assertion-heading">
+                <div>
+                    <p class="assertion-eyebrow">PROVENANCE · KÜRATÖR İŞ AKIŞI</p>
+                    <h2>Alan beyanları</h2>
+                    <p class="muted">Kayıt değerleri, onları bildiren kaynak ve inceleme durumu.</p>
+                </div>
+                <a class="back-link" href="/platforma">← Platform panosu</a>
+            </div>
+
+            <div class="assertion-toolbar">
+                <label for="assertion-status">Durum</label>
+                <select id="assertion-status">
+                    <option value="proposed">Bekleyen</option>
+                    <option value="accepted">Kabul edilmiş</option>
+                    <option value="rejected">Reddedilmiş</option>
+                    <option value="superseded">Yerine yenisi gelmiş</option>
+                </select>
+                <button type="button" id="assertion-refresh">Yenile</button>
+                <span id="assertion-count" class="muted"></span>
+            </div>
+
+            <div id="assertion-status-message" class="status" hidden></div>
+            <div id="assertion-list" class="assertion-list" aria-live="polite"></div>
+        </section>
+    </main>
+
+    <footer>LibraryHub · <a href="/">Kataloğa dön</a></footer>
+    <script src="/static/beyanlar.js"></script>
+</body>
+</html>

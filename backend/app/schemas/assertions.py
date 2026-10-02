@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -24,4 +24,5 @@ class AssertionCreate(BaseModel):
 
 
 class AssertionDecision(BaseModel):
+    decision: Literal["accepted", "rejected"] | None = None
     note: str | None = Field(default=None, max_length=2000)

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#183c32">
+    <title>LibraryHub · Platform panosu</title>
+    <link rel="stylesheet" href="/static/platforma.css">
+</head>
+<body class="platform-page">
+    <div class="platform-shell">
+        <aside class="rail">
+            <a class="rail-brand" href="/" aria-label="LibraryHub ana sayfa">
+                <span class="rail-mark">LH</span>
+                <span>
+                    <strong>LibraryHub</strong>
+                    <small>Bibliyografik omurga</small>
+                </span>
+            </a>
+
+            <nav class="rail-nav" aria-label="Platform sayfaları">
+                <p class="nav-label">PLATFORM</p>
+                <a class="nav-item active" href="/platforma" aria-current="page">
+                    <span class="nav-index">00</span> Genel görünüm
+                </a>
+
+                <p class="nav-label nav-spaced">ÇALIŞMA ALANLARI</p>
+                <a class="nav-item" href="/">
+                    <span class="nav-index">01</span> Katalog araması
+                </a>
+                <a class="nav-item" href="/admin">
+                    <span class="nav-index">02</span> Küratör masası
+                </a>
+                <a class="nav-item" href="/beyanlar">
+                    <span class="nav-index">03</span> Beyan kuyruğu
+                </a>
+                <a class="nav-item" href="/kutuphane">
+                    <span class="nav-index">04</span> Kütüphane
+                </a>
+                <a class="nav-item" href="/yayinevi">
+                    <span class="nav-index">05</span> Yayınevi
+                </a>
+                <a class="nav-item" href="/iceaktarma">
+                    <span class="nav-index">06</span> MARC aktarımı
+                </a>
+                <a class="nav-item" href="/otorite">
+                    <span class="nav-index">07</span> Otorite kuyruğu
+                </a>
+            </nav>
+
+            <div class="rail-status" aria-live="polite">
+                <div class="rail-status-top">
+                    <span class="status-light checking" id="health-light"></span>
+                    <span id="health-label">Bağlantı denetleniyor</span>
+                </div>
+                <span class="rail-status-detail" id="health-detail">LibraryHub API</span>
+                <button type="button" class="quiet-button" id="health-refresh">Durumu yenile</button>
+            </div>
+
+            <div class="rail-footer">Bir katalog, birçok kaynak.</div>
+        </aside>
+
+        <main class="dashboard">
+            <header class="pagebar">
+                <div class="crumb"><span>LIBRARYHUB</span><i>/</i> PLATFORM</div>
+                <a class="catalog-link" href="/">Kataloğu aç <span aria-hidden="true">↗</span></a>
+            </header>
+
+            <section class="intro">
+                <div>
+                    <p class="eyebrow"><span class="eyebrow-mark"></span> ORTAK BİLGİ ALTYAPISI</p>
+                    <h1>Dağınık kayıtlar.<br><em>Ortak bir katalog.</em></h1>
+                    <p class="intro-copy">
+                        Kaynakları bir araya getir, iddiaları kökeniyle koru,
+                        kütüphanelerin tuttuğu eserleri görünür kıl.
+                    </p>
+                </div>
+                <div class="intro-stamp">
+                    <span>SON KONTROL</span>
+                    <time id="checked-at">Henüz yapılmadı</time>
+                    <span class="version" id="api-version">API sürümü bekleniyor</span>
+                </div>
+            </section>
+
+            <section class="signal-strip" aria-label="Platform özeti">
+                <div class="signal">
+                    <span class="signal-number">01</span>
+                    <div><strong>Ortak katalog</strong><small>Paylaşılan bibliyografik kayıtlar</small></div>
+                </div>
+                <div class="signal">
+                    <span class="signal-number accent-coral">02</span>
+                    <div><strong>Kaynak izi</strong><small>Alan düzeyinde beyan ve karar</small></div>
+                </div>
+                <div class="signal">
+                    <span class="signal-number accent-blue">03</span>
+                    <div><strong>Yerel görünüm</strong><small>Kütüphane ve yayınevi çalışma alanı</small></div>
+                </div>
+            </section>
+
+            <section class="flow-section" aria-labelledby="flow-title">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">VERİNİN YOLCULUĞU</p>
+                        <h2 id="flow-title">Bir kayıt, uçtan uca</h2>
+                    </div>
+                    <span class="section-note">Kaynağından keşfe</span>
+                </div>
+
+                <div class="flow-track">
+                    <article class="flow-node source-node">
+                        <span class="node-kicker">01 · GİRİŞ</span>
+                        <h3>Kaynaklar</h3>
+                        <p>Kütüphane kayıtları, yayınevi bildirimleri ve otorite verisi.</p>
+                        <div class="node-tags"><span>MARC</span><span>ISBN</span><span>Paydaş</span></div>
+                    </article>
+                    <div class="flow-link" aria-hidden="true"><span></span></div>
+                    <article class="flow-node core-node">
+                        <span class="node-kicker">02 · OMURGA</span>
+                        <h3>Ortak kayıt</h3>
+                        <p>Eser, baskı, kişi ve kurum ilişkileri tek kimlik etrafında.</p>
+                        <div class="node-tags"><span>Eser</span><span>Baskı</span></div>
+                    </article>
+                    <div class="flow-link coral-link" aria-hidden="true"><span></span></div>
+                    <article class="flow-node review-node">
+                        <span class="node-kicker">03 · GÜVEN</span>
+                        <h3>Köken ve karar</h3>
+                        <p>Alan iddiası kaynağıyla saklanır; kanonik değişikliği küratör yapar.</p>
+                        <div class="node-tags"><span>Beyan</span><span>Denetim izi</span></div>
+                    </article>
+                    <div class="flow-link blue-link" aria-hidden="true"><span></span></div>
+                    <article class="flow-node discovery-node">
+                        <span class="node-kicker">04 · KEŞİF</span>
+                        <h3>Kütüphaneler</h3>
+                        <p>Okur eseri bulur; kurumlar holding ve baskı bilgisini görür.</p>
+                        <div class="node-tags"><span>Arama</span><span>Koleksiyon</span></div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="workspace-section" aria-labelledby="workspace-title">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">BUGÜN AÇILABİLENLER</p>
+                        <h2 id="workspace-title">Çalışma alanları</h2>
+                    </div>
+                    <span class="section-note">Bir platform, farklı roller</span>
+                </div>
+
+                <div class="workspace-grid">
+                    <a class="workspace-item" href="/">
+                        <span class="workspace-type">KAMUYA AÇIK</span>
+                        <span class="workspace-title">Katalog ara <b aria-hidden="true">↗</b></span>
+                        <span class="workspace-copy">Eserleri, yazarları ve hangi baskının hangi kütüphanede olduğunu keşfet.</span>
+                    </a>
+                    <a class="workspace-item" href="/admin">
+                        <span class="workspace-type type-coral">KÜRATÖR</span>
+                        <span class="workspace-title">Yönetim masası <b aria-hidden="true">↗</b></span>
+                        <span class="workspace-copy">Önerileri değerlendir, kurumları ve erişim rollerini yönet.</span>
+                    </a>
+                    <a class="workspace-item" href="/beyanlar">
+                        <span class="workspace-type type-coral">KÖKEN VE GÜVEN</span>
+                        <span class="workspace-title">Beyan kuyruğu <b aria-hidden="true">↗</b></span>
+                        <span class="workspace-copy">Alan iddialarını kaynağıyla incele, kabul edilenleri kanonik kayda uygula.</span>
+                    </a>
+                    <a class="workspace-item" href="/kutuphane">
+                        <span class="workspace-type type-blue">KÜTÜPHANE</span>
+                        <span class="workspace-title">Kurum alanı <b aria-hidden="true">↗</b></span>
+                        <span class="workspace-copy">Kendi koleksiyonunu ve paylaşılan kayıtlara katkını gör.</span>
+                    </a>
+                    <a class="workspace-item" href="/yayinevi">
+                        <span class="workspace-type type-green">YAYINEVİ</span>
+                        <span class="workspace-title">Yayınevi alanı <b aria-hidden="true">↗</b></span>
+                        <span class="workspace-copy">Başlıklarını ve bu eserleri tutan kütüphaneleri izle.</span>
+                    </a>
+                    <a class="workspace-item" href="/iceaktarma">
+                        <span class="workspace-type type-blue">VERİ GİRİŞİ</span>
+                        <span class="workspace-title">MARC aktarımı <b aria-hidden="true">↗</b></span>
+                        <span class="workspace-copy">Aktarım dosyasını yükle, eşlemeyi ve sonuçları incele.</span>
+                    </a>
+                    <a class="workspace-item" href="/otorite">
+                        <span class="workspace-type type-coral">OTORİTE</span>
+                        <span class="workspace-title">Eşleşme kuyruğu <b aria-hidden="true">↗</b></span>
+                        <span class="workspace-copy">Benzer kişi ve kurum kayıtlarını karara bağla.</span>
+                    </a>
+                </div>
+            </section>
+
+            <footer class="dashboard-footer">
+                <span>LibraryHub</span>
+                <span>Doğru kayıt, izlenebilir kayıttır.</span>
+            </footer>
+        </main>
+    </div>
+    <script src="/static/platforma.js"></script>
+</body>
+</html>

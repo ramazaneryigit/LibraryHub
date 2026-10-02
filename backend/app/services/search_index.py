@@ -33,7 +33,7 @@ from typing import Any, Iterable, Mapping
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.sql import TextClause
+from sqlalchemy.sql.elements import TextClause
 from sqlalchemy.types import Uuid
 
 from ..core.text import normalize_text

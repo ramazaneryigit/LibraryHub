@@ -48,7 +48,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from sqlalchemy import bindparam, text
-from sqlalchemy.sql import TextClause
+from sqlalchemy.sql.elements import TextClause
 from sqlalchemy.types import Uuid
 
 from ..core.text import normalize_text

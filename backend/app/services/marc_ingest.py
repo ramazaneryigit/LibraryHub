@@ -280,7 +280,7 @@ def _write_holding(executor, mapped: MappedRecord, ids: Mapping) -> Any:
     ).scalar()
 
     if existing is not None:
-        return existing
+        return None
 
     holding_id = uuid7()
 
@@ -387,19 +387,39 @@ def ingest(
                 continue
 
             existing = None
+            marc_identifier = None
 
             if mapped.control_number:
+                # MARC 001 is assigned by a library, not globally. Qualifying it
+                # with the stable source-system id prevents another library's
+                # coincidentally identical local key from suppressing this row.
+                marc_identifier = f"{source_id}:{mapped.control_number}"
                 existing = executor.execute(
                     text(
-                        "select w.entity_id from public.works w "
+                        "select em.manifestation_entity_id from public.works w "
                         "join public.identifiers i on i.entity_id = w.entity_id "
+                        "join public.work_expression we on we.work_entity_id = w.entity_id "
+                        "join public.expression_manifestation em "
+                        "  on em.expression_entity_id = we.expression_entity_id "
                         "where i.scheme = 'MARC' and i.value = :value limit 1"
                     ),
-                    {"value": mapped.control_number},
+                    {"value": marc_identifier},
                 ).scalar()
 
             if existing is not None:
                 unchanged += 1
+
+                # The first pass may have lacked a resolvable 852 branch. Once
+                # branch metadata is corrected, replaying the file can complete
+                # the holding without duplicating the bibliographic record.
+                if mapped.gives_a_holding:
+                    if _write_holding(
+                        executor,
+                        mapped,
+                        {"manifestation_entity_id": existing},
+                    ) is not None:
+                        holdings += 1
+
                 continue
 
             ids = _write_record(executor, mapped)
@@ -417,7 +437,7 @@ def ingest(
                     {
                         "id": uuid7(),
                         "entity": ids["work_entity_id"],
-                        "value": mapped.control_number,
+                        "value": marc_identifier,
                     },
                 )
 

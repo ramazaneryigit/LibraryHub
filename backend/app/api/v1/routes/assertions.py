@@ -15,6 +15,7 @@ See docs/merkezi-yapi-plani.md §2.
 from __future__ import annotations
 
 import json
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from sqlalchemy import text
@@ -68,6 +69,10 @@ def list_own_assertions(
     }
 
 
+@router.post(
+    "/field-assertions",
+    status_code=http_status.HTTP_201_CREATED,
+)
 @router.post(
     "/tenant/assertions",
     status_code=http_status.HTTP_201_CREATED,
@@ -127,6 +132,23 @@ def file_assertion(
     }
 
 
+@router.get("/field-assertions/{entity_id}")
+def list_entity_assertions(
+    entity_id: UUID,
+    status: str | None = Query(default=None, pattern="^(proposed|accepted|rejected|superseded)$"),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    rows = assertions.list_assertions(
+        db,
+        entity_id=entity_id,
+        status=status,
+        limit=limit,
+    )
+
+    return {"count": len(rows), "assertions": [_view(row) for row in rows]}
+
+
 # --------------------------------------------------------------- küratör
 
 
@@ -169,8 +191,7 @@ def _decide(
 
     row = db.execute(
         text(
-            "select id, status, entity_type, field, value "
-            "from public.field_assertions where id = :id"
+            "select id, status from public.field_assertions where id = :id"
         ),
         {"id": assertion_id},
     ).mappings().first()
@@ -254,6 +275,22 @@ def reject_assertion(
         db,
         user,
     )
+
+
+@router.post("/assertions/{assertion_id}/decide")
+def decide_assertion(
+    assertion_id: str,
+    payload: AssertionDecision,
+    db: Session = Depends(owner_db),
+    user: User = Depends(require_role("admin")),
+):
+    if payload.decision is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="decision must be 'accepted' or 'rejected'",
+        )
+
+    return _decide(assertion_id, payload.decision, payload, db, user)
 
 
 def _view(row) -> dict:

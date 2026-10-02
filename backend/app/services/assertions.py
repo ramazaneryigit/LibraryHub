@@ -18,7 +18,7 @@ import uuid
 from typing import Any, Iterable, Mapping
 
 from sqlalchemy import bindparam, text
-from sqlalchemy.sql import TextClause
+from sqlalchemy.sql.elements import TextClause
 from sqlalchemy.types import Uuid
 
 __all__ = [
@@ -54,18 +54,23 @@ def source_id_for_tenant(executor, tenant_id) -> Any:
 def account_source(executor, user) -> Any:
     """The source this account acts as.
 
-    A platform account is the platform source; a library's staff are that
-    library's. The four participants who are not libraries yet have no source of
-    their own -- when they get workspaces, this is the function that learns where
-    to find them.
+    Library staff act as their tenant's source and platform administrators as the
+    platform source. Other principal types need an explicit source-system mapping;
+    they must not inherit the platform identity merely because they have no tenant.
     """
 
-    if getattr(user, "tenant_id", None) is not None:
-        return source_id_for_tenant(executor, user.tenant_id)
+    principal_kind = getattr(user, "principal_kind", None)
+    tenant_id = getattr(user, "tenant_id", None)
 
-    return executor.execute(
-        text("select id from public.source_systems where code = 'platform'")
-    ).scalar()
+    if principal_kind == "tenant_staff" and tenant_id is not None:
+        return source_id_for_tenant(executor, tenant_id)
+
+    if principal_kind == "platform" and tenant_id is None:
+        return executor.execute(
+            text("select id from public.source_systems where code = 'platform'")
+        ).scalar()
+
+    return None
 
 
 def _bind(executor, name: str, value: str) -> None:
@@ -110,23 +115,22 @@ def record(
     import json
 
     assertion_id = uuid.uuid4()
+    encoded_value = json.dumps(value)
 
     executor.execute(
         text(
             "insert into public.field_assertions "
-            "(id, entity_id, entity_type, field, value, source_system_id, "
-            " asserted_by, asserted_at, status, confidence) "
-            "values (:id, :entity_id, :entity_type, :field, cast(:value as jsonb), "
-            "        :source_id, :asserted_by, now(), 'proposed', :confidence)"
+            "(id, entity_id, field_name, value_text, value_json, source_system_id, "
+            " asserted_at, status, confidence) "
+            "values (:id, :entity_id, :field, :value, cast(:value as json), "
+            "        :source_id, now(), 'proposed', :confidence)"
         ),
         {
             "id": assertion_id,
             "entity_id": entity_id,
-            "entity_type": entity_type,
             "field": field,
-            "value": json.dumps(value),
+            "value": encoded_value,
             "source_id": source_id,
-            "asserted_by": asserted_by,
             "confidence": confidence,
         },
     )
@@ -147,11 +151,19 @@ def decide(
     if status not in ("accepted", "rejected"):
         raise ValueError("a decision is 'accepted' or 'rejected'")
 
-    executor.execute(
+    old_status = executor.execute(
+        text("select status from public.field_assertions where id = :id"),
+        {"id": assertion_id},
+    ).scalar()
+
+    if old_status is None:
+        return
+
+    result = executor.execute(
         text(
             "update public.field_assertions "
             "set status = :status, reviewed_by = :reviewed_by, "
-            "    reviewed_at = now(), review_note = :note "
+            "    reviewed_at = now(), observation_notes = :note "
             "where id = :id and status = 'proposed'"
         ),
         {
@@ -161,6 +173,25 @@ def decide(
             "note": note,
         },
     )
+
+    if result.rowcount:
+        executor.execute(
+            text(
+                "insert into public.field_assertion_audits "
+                "(id, assertion_id, old_status, new_status, changed_by_user_id, "
+                " reason, changed_at) "
+                "values (:id, :assertion_id, :old_status, :new_status, "
+                "        :changed_by, :reason, now())"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "assertion_id": assertion_id,
+                "old_status": old_status,
+                "new_status": status,
+                "changed_by": reviewed_by,
+                "reason": note,
+            },
+        )
 
 
 def accept_and_apply(
@@ -190,8 +221,11 @@ def accept_and_apply(
 
     row = executor.execute(
         text(
-            "select id, entity_id, entity_type, field, value, status "
-            "from public.field_assertions where id = :id"
+            "select a.id, a.entity_id, e.entity_type, a.field_name as field, "
+            "       coalesce(a.value_json::text, a.value_text) as value, a.status "
+            "from public.field_assertions a "
+            "join public.entities e on e.id = a.entity_id "
+            "where a.id = :id"
         ),
         {"id": assertion_id},
     ).mappings().first()
@@ -199,11 +233,19 @@ def accept_and_apply(
     if row is None:
         return None
 
+    value = row["value"]
+
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            pass
+
     result = apply_fields(
         executor,
         row["entity_id"],
         row["entity_type"],
-        [{"field": row["field"], "proposed": row["value"]}],
+        [{"field": row["field"], "proposed": value}],
     )
 
     decide(
@@ -236,11 +278,14 @@ def list_assertions(
     # parameter that only ever appears in `is null`, and answers "could not
     # determine data type of parameter" -- which reaches the client as a 500.
     statement = (
-        "select a.id, a.entity_id, a.entity_type, a.field, a.value, a.status, "
-        "       a.asserted_at, a.reviewed_at, a.review_note, a.confidence, "
+        "select a.id, a.entity_id, e.entity_type, a.field_name as field, "
+        "       coalesce(a.value_json::text, a.value_text) as value, a.status, "
+        "       a.asserted_at, a.reviewed_at, "
+        "       a.observation_notes as review_note, a.confidence, "
         "       s.code as source_code, s.name as source_name, "
         "       s.system_type as source_type, s.trust_level "
         "from public.field_assertions a "
+        "join public.entities e on e.id = a.entity_id "
         "join public.source_systems s on s.id = a.source_system_id "
         "where (cast(:entity_id as uuid) is null or a.entity_id = cast(:entity_id as uuid)) "
         "  and (cast(:status as text) is null or a.status = cast(:status as text)) "

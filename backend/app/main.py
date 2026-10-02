@@ -65,6 +65,14 @@ def create_app() -> FastAPI:
     def root():
         return FileResponse("app/static/index.html")
 
+    @application.get("/platforma", include_in_schema=False)
+    def platform_overview():
+        return FileResponse("app/static/platforma.html")
+
+    @application.get("/beyanlar", include_in_schema=False)
+    def assertion_workspace():
+        return FileResponse("app/static/beyanlar.html")
+
     # The curation panel. A plain path rather than `/static/admin.html` because
     # it is a place people are sent, not an asset.
     @application.get("/admin", include_in_schema=False)
