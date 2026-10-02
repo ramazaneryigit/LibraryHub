@@ -123,16 +123,36 @@ def declare_publication(
     executor.execute(
         text(
             "insert into public.works "
-            "(entity_id, canonical_title, normalized_title, description, created_at) "
-            "values (:id, :title, :normalized, :author, now())"
+            "(entity_id, canonical_title, normalized_title, created_at) "
+            "values (:id, :title, :normalized, now())"
         ),
         {
             "id": work_id,
             "title": title,
             "normalized": normalize_text(title) or title.casefold(),
-            "author": author,
         },
     )
+
+    # The author becomes an authority record and a relation, not a string in the
+    # work's description.
+    #
+    # It used to be the description, while the MARC path created a person -- so the
+    # same catalogue held two answers to "who wrote this". The export made it
+    # visible: a record declared through the ISBN path came back with no author at
+    # all, because there was no author to export, only a sentence.
+    if author:
+        from .authority_queue import agent_for
+
+        author_id = agent_for(executor, author, "person")
+
+        executor.execute(
+            text(
+                "insert into public.work_agent_relation "
+                "(work_entity_id, agent_entity_id, role) "
+                "values (:work, :agent, 'author')"
+            ),
+            {"work": work_id, "agent": author_id},
+        )
 
     # Expression
     executor.execute(

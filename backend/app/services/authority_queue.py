@@ -25,12 +25,62 @@ from sqlalchemy import text
 from ..core.ids import uuid7
 
 __all__ = [
+    "agent_for",
     "decide",
     "enqueue",
     "find_existing",
     "list_queue",
     "resolve_agent",
 ]
+
+
+def agent_for(executor, name: str, agent_type: str):
+    """The authority record for a name, creating one only if nothing decides.
+
+    Lives here rather than in the ingest because two paths into the catalogue need
+    it -- a MARC file and an ISBN declaration -- and they were disagreeing about
+    where an author lives. One put a `persons` record and a relation; the other
+    wrote the name into the work's description. A pool of records cannot have two
+    answers to "who wrote this".
+    """
+
+    decided, _queued = resolve_agent(executor, name, agent_type)
+
+    if decided is not None:
+        return decided
+
+    entity_id = uuid7()
+    kind = "ORGANIZATION" if agent_type == "publisher" else "PERSON"
+
+    # `entities` before its subtype in every case. The triggers are deferred, but
+    # this order has already cost one debugging session (§0.19).
+    executor.execute(
+        text(
+            "insert into public.entities (id, entity_type, created_at, updated_at) "
+            "values (:id, :kind, now(), now())"
+        ),
+        {"id": entity_id, "kind": kind},
+    )
+
+    if kind == "ORGANIZATION":
+        executor.execute(
+            text(
+                "insert into public.collective_agents "
+                "(entity_id, canonical_name, agent_type) "
+                "values (:id, :name, :agent_type)"
+            ),
+            {"id": entity_id, "name": name, "agent_type": agent_type},
+        )
+    else:
+        executor.execute(
+            text(
+                "insert into public.persons (entity_id, canonical_name) "
+                "values (:id, :name)"
+            ),
+            {"id": entity_id, "name": name},
+        )
+
+    return entity_id
 
 
 def find_existing(executor, name: str, limit: int = 200) -> list[Mapping]:

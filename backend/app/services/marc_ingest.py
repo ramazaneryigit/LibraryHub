@@ -93,56 +93,14 @@ def resolve_branch(executor, code: str) -> Any:
 
 
 def _agent_for(executor, name: str, agent_type: str) -> uuid.UUID:
-    """An authority record for a person or an organization, reused if it exists.
+    """Delegates, so a MARC file and an ISBN declaration agree about authorship.
 
-    Matched on the canonical name. This is the weakest join in the pipeline and it
-    is known to be: authority control -- the same author arriving spelled forty
-    ways -- is a separate piece of work, and pretending otherwise here would mean
-    silently merging people.
+    The body moved to `authority_queue.agent_for` when the ISBN path turned out to
+    be writing the author into the work's description instead of creating a person.
+    One implementation, two callers.
     """
 
-    # Authority control. An existing record is used when something *decides*
-    # these are one person -- an ORCID, agreeing dates; a new one is created when
-    # nothing does, and the resemblance is recorded for a person to look at.
-    #
-    # The middle case is the one that matters: matching on the exact name turned
-    # forty spellings into forty people, and matching on resemblance alone would
-    # merge two real people. This does neither.
-    decided, _queued = authority_queue.resolve_agent(executor, name, agent_type)
-
-    if decided is not None:
-        return decided
-
-    entity_id = uuid7()
-    kind = "ORGANIZATION" if agent_type == "publisher" else "PERSON"
-
-    executor.execute(
-        text(
-            "insert into public.entities (id, entity_type, created_at, updated_at) "
-            "values (:id, :kind, now(), now())"
-        ),
-        {"id": entity_id, "kind": kind},
-    )
-
-    if kind == "ORGANIZATION":
-        executor.execute(
-            text(
-                "insert into public.collective_agents "
-                "(entity_id, canonical_name, agent_type) "
-                "values (:id, :name, :agent_type)"
-            ),
-            {"id": entity_id, "name": name, "agent_type": agent_type},
-        )
-    else:
-        executor.execute(
-            text(
-                "insert into public.persons (entity_id, canonical_name) "
-                "values (:id, :name)"
-            ),
-            {"id": entity_id, "name": name},
-        )
-
-    return entity_id
+    return authority_queue.agent_for(executor, name, agent_type)
 
 
 def _write_record(executor, mapped: MappedRecord) -> Mapping:
