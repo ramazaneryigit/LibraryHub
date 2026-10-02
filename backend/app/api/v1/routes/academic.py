@@ -101,6 +101,9 @@ def works(
 
     Authorship through a work *and* through an expression inside one: a profile
     that showed only the first would hide every translated or illustrated title.
+    
+    Article qualification: If the work is an article in a journal, the response
+    includes journal title, volume, issue, pages, year, DOI.
     """
 
     rows = academic.profile_works(db, user, limit=limit)
@@ -111,8 +114,17 @@ def works(
             {
                 "work_entity_id": str(row["work_entity_id"]),
                 "title": row["title"],
+                "work_type": row["work_type"],
                 "holdings": row["holdings"],
                 "libraries": row["libraries"],
+                "journal": {
+                    "title": row["journal_title"],
+                    "volume": row["volume"],
+                    "issue": row["issue"],
+                    "pages": row["pages"],
+                    "year": row["year"],
+                    "doi": row["doi"],
+                } if row["journal_title"] else None,
             }
             for row in rows
         ],

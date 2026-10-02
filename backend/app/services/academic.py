@@ -19,6 +19,12 @@ Reading across libraries
 read through `public.holdings_compat` rather than `tenant.holdings`. The tenant
 table is fail-closed per tenant, and a request from an academician carries no
 tenant at all -- so it would answer with zero rows and nothing would say why.
+
+Article qualification
+---------------------
+Makale derginin hangi cilt/sayı/sayfada yayımlandığı, `entity_relation_qualifiers`
+tarafından tutulur. `is_part_of` ilişkisinden qualifier alınır ve profilin işlemle
+bilgisiyle beraber sunulur.
 """
 
 from __future__ import annotations
@@ -162,10 +168,13 @@ def profile(executor, user) -> Mapping:
 #
 # "How many libraries" is a `count(distinct tenant_id)` over the projection -- no
 # join to `control` at all, because the projection already knows its tenant.
+# Article qualification (cilt, sayı, sayfa, yıl) is LEFT JOIN'ed from
+# entity_relation_qualifiers for is_part_of relations.
 WORKS = """
 select
     w.entity_id       as work_entity_id,
     w.canonical_title as title,
+    w.work_type,
     (select count(distinct h.holding_id)
        from public.expression_manifestation em
        join public.work_expression we2
@@ -179,8 +188,26 @@ select
          on we2.expression_entity_id = em.expression_entity_id
        join public.holdings_compat h
          on h.manifestation_entity_id = em.manifestation_entity_id
-      where we2.work_entity_id = w.entity_id) as libraries
+      where we2.work_entity_id = w.entity_id) as libraries,
+    q.volume,
+    q.issue,
+    q.pages,
+    q.year,
+    q.doi,
+    (select canonical_title from public.works 
+     where entity_id in (
+        select object_entity_id from public.entity_relation
+        where subject_entity_id = w.entity_id 
+          and predicate = 'is_part_of'
+        limit 1
+     )
+     limit 1) as journal_title
 from public.works w
+left join public.entity_relation er 
+  on er.subject_entity_id = w.entity_id 
+  and er.predicate = 'is_part_of'
+left join public.entity_relation_qualifiers q
+  on q.entity_relation_id = er.id
 where w.entity_id in (
     select war.work_entity_id
       from public.work_agent_relation war
