@@ -370,6 +370,147 @@ a:hover {
     color: var(--success);
 }
 
+.search-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    align-items: start;
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.results {
+    min-width: 0;
+    margin-top: 0;
+}
+
+.institution-panel {
+    position: sticky;
+    top: 92px;
+    max-height: calc(100vh - 112px);
+    overflow-y: auto;
+    padding: 18px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+}
+
+.institution-panel-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.institution-panel h2 {
+    font-size: 18px;
+    color: var(--primary-800);
+}
+
+.institution-hint {
+    margin: 8px 0 12px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.institution-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.institution-filter {
+    width: 100%;
+    display: grid;
+    gap: 2px;
+    padding: 9px 10px;
+    color: var(--text);
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+    font: inherit;
+}
+
+.institution-filter:hover,
+.institution-filter.selected {
+    background: var(--primary-50);
+}
+
+.institution-filter.selected {
+    box-shadow: inset 3px 0 var(--primary-700);
+}
+
+.institution-name {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.institution-count {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.clear-institution-filter {
+    padding: 4px 8px;
+    color: var(--primary-700);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.advanced-search {
+    max-width: 720px;
+    margin: 12px auto 0;
+    padding: 10px 14px;
+    color: var(--text);
+    text-align: left;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+}
+
+.advanced-search summary {
+    color: var(--primary-800);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.advanced-search-fields {
+    display: grid;
+    grid-template-columns: auto minmax(160px, 1fr);
+    align-items: center;
+    gap: 8px 12px;
+    padding-top: 10px;
+    font-size: 13px;
+}
+
+.advanced-search-fields select {
+    min-width: 0;
+    padding: 8px 10px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    font: inherit;
+}
+
+.advanced-search-fields p {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+}
 .results {
     display: grid;
     gap: 16px;
@@ -446,98 +587,6 @@ a:hover {
     color: var(--text-muted);
     line-height: 1.65;
     margin: 14px 0 0;
-}
-
-/* --------------------------------------------- kartta kütüphane/baskı bloğu */
-
-.result-holdings {
-    margin-top: 18px;
-    padding-top: 14px;
-    border-top: 1px solid var(--border);
-}
-
-.result-holdings.empty {
-    color: var(--text-muted);
-    font-size: 14px;
-    font-style: italic;
-    border-top: 0;
-}
-
-.result-holdings-total {
-    display: inline-block;
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--primary-700);
-    background: var(--primary-50);
-    border-radius: var(--radius-pill);
-    padding: 4px 13px;
-    margin-bottom: 10px;
-}
-
-.result-edition {
-    padding: 9px 0;
-    border-top: 1px dashed var(--border);
-}
-
-.result-edition:first-of-type {
-    border-top: 0;
-}
-
-.result-edition-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 4px 12px;
-    /* Uzun bir yayın bildirimi (Rusça, Arapça, çok kelimeli) tek satıra
-       sığmadığında taşmak yerine alt satıra iner. Taşma, dar ekranda bütün
-       sayfayı yana kaydırıyordu. */
-    flex-wrap: wrap;
-}
-
-.result-edition-label {
-    font-weight: 600;
-    color: var(--text);
-}
-
-.result-edition-count {
-    color: var(--text-muted);
-    font-size: 13px;
-    white-space: nowrap;
-}
-
-.result-edition-libraries {
-    color: var(--primary-600);
-    font-size: 13.5px;
-    margin-top: 3px;
-}
-
-.result-holding {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 12px;
-    font-size: 14px;
-    padding: 3px 0;
-}
-
-.result-holding-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.result-holding-count {
-    color: var(--text-muted);
-    font-size: 13px;
-    white-space: nowrap;
-}
-
-.result-holding.rest {
-    justify-content: flex-start;
-    color: var(--text-muted);
-    font-size: 13px;
-    font-style: italic;
-    padding-top: 7px;
 }
 
 .detail-button {
@@ -881,6 +930,15 @@ footer a:hover {
 /* -------------------------------------------------------------- responsive */
 
 @media (max-width: 860px) {
+    .search-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .institution-panel {
+        position: static;
+        max-height: none;
+        order: -1;
+    }
     .topbar,
     .hero,
     .content,

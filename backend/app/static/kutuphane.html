@@ -62,7 +62,7 @@
 
         <nav class="tabs" id="tabs">
             <button type="button" class="tab" data-view="panel">Panel</button>
-            <button type="button" class="tab" data-view="holdings">Holdingler</button>
+            <button type="button" class="tab" data-view="holdings">Koleksiyon kayıtları</button>
             <button type="button" class="tab" data-view="items">Nüshalar</button>
             <button type="button" class="tab" data-view="proposals">Önerilerim</button>
         </nav>
@@ -73,19 +73,46 @@
         <section id="view-panel" class="view" hidden>
             <div class="summary-grid" id="summary-grid"></div>
 
+            <section class="chart-card" aria-labelledby="inventory-chart-title">
+                <div class="quality-heading">
+                    <div>
+                        <h2 id="inventory-chart-title">Nüsha durumları</h2>
+                        <p class="muted">Kayıtlı nüshaların durumlara göre dağılımı</p>
+                    </div>
+                </div>
+                <div id="inventory-chart" class="status-chart" role="img"
+                     aria-label="Nüsha durumlarına göre dağılım"></div>
+            </section>
+
+            <section class="quality-section" aria-labelledby="quality-heading">
+                <div class="quality-heading">
+                    <div>
+                        <h2 id="quality-heading">Veri kontrolü</h2>
+                        <p id="quality-summary" class="muted">Kayıtlardaki olası eksikleri kontrol edin.</p>
+                    </div>
+                    <button type="button" id="quality-refresh">Kontrol et</button>
+                </div>
+                <div id="quality-grid" class="summary-grid"></div>
+                <div id="quality-detail" class="list" hidden></div>
+                <p class="muted quality-footnote">
+                    Bunlar otomatik düzeltme değil, inceleme önerileridir. Barkodsuz nüsha
+                    veya henüz nüshası olmayan fiziksel koleksiyon kaydı geçerli olabilir.
+                </p>
+            </section>
+
             <div class="note">
-                <strong>Holding</strong>, kütüphanenizin bir baskıyı tuttuğu
-                beyandır. <strong>Nüsha</strong>, o holdinge ait tek bir fiziksel
-                kitaptır — rafta duran şey. Bir holdingin nüshası olmayabilir;
+                <strong>Koleksiyon kaydı</strong>, kütüphanenizin bir baskıyı tuttuğu
+                beyandır. <strong>Nüsha</strong>, o koleksiyon kaydına ait tek bir fiziksel
+                kitaptır — rafta duran şey. Bir koleksiyon kaydının nüshası olmayabilir;
                 o zaman da katalogda görünür.
             </div>
         </section>
 
-        <!-- --------------------------------------------- holdingler -->
+        <!-- ------------------------------- koleksiyon kayıtları -->
         <section id="view-holdings" class="view" hidden>
             <div class="toolbar">
                 <button type="button" id="holding-new" class="primary">
-                    Katalogdan holding ekle
+                    Katalogdan koleksiyon kaydı ekle
                 </button>
                 <button type="button" id="holding-refresh">Yenile</button>
                 <span class="muted" id="holding-summary"></span>
@@ -95,7 +122,7 @@
                 <h3>Katalogdan bir baskı seçin</h3>
 
                 <p class="muted note">
-                    Holding, paylaşılan katalogdaki bir baskıya bağlanır. Önce
+                    Koleksiyon kaydı, paylaşılan katalogdaki bir baskıya bağlanır. Önce
                     eseri arayın, sonra kütüphanenizin tuttuğu baskıyı seçin.
                 </p>
 
@@ -127,7 +154,7 @@
                     </label>
 
                     <div class="row">
-                        <button type="submit" class="primary">Holdingi kaydet</button>
+                        <button type="submit" class="primary">Koleksiyon kaydını kaydet</button>
                         <button type="button" id="holding-cancel">Vazgeç</button>
                     </div>
                 </form>
@@ -140,7 +167,7 @@
         <section id="view-items" class="view" hidden>
             <div class="toolbar">
                 <label>
-                    Holding
+                    Koleksiyon kaydı
                     <select id="item-holding-filter"><option value="">Hepsi</option></select>
                 </label>
                 <button type="button" id="item-new" class="primary">Yeni nüsha</button>
@@ -152,7 +179,7 @@
                 <h3>Yeni nüsha</h3>
 
                 <label>
-                    Holding
+                    Koleksiyon kaydı
                     <select id="item-holding" required></select>
                 </label>
 

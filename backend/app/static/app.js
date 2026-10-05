@@ -2,6 +2,9 @@ const searchForm = document.getElementById("search-form");
 const searchInput = document.getElementById("search-input");
 const statusBox = document.getElementById("status");
 const resultsBox = document.getElementById("results");
+const institutionPanel = document.getElementById("institution-panel");
+const searchFieldSelect = document.getElementById("search-field");
+const searchModeSelect = document.getElementById("search-mode");
 
 
 /* ---------------------------------------------------------
@@ -25,148 +28,6 @@ function escapeHtml(value) {
 /* ---------------------------------------------------------
    ARAMA SONUCU KARTI
 --------------------------------------------------------- */
-
-/* Eseri tutan kütüphaneler, **baskı bazında**.
- *
- * Asıl soru "bu eserin 2024 nüshası hangi kütüphanede" ve bunun cevabı yalnızca
- * toplam bir sayıda kaybolur: "5 nüsha · 3 kütüphane" hangi baskının nerede
- * olduğunu söylemez. Bu yüzden kütüphaneler manifestation (baskı) düğümünün
- * altında toplanıyor, tam da veritabanındaki bağın durduğu yerde.
- */
-function workEditions(work) {
-    const editions = [];
-
-    (work.expressions || []).forEach(expression => {
-        (expression.manifestations || []).forEach(manifestation => {
-            const holdings = (manifestation.holdings || [])
-                .slice()
-                .sort((left, right) => left.name.localeCompare(right.name, "tr"));
-
-            editions.push({
-                entity_id: manifestation.entity_id,
-                label: editionLabel(manifestation),
-                holdings: holdings,
-                item_count: holdings.reduce(
-                    (sum, holding) => sum + (holding.item_count || 0),
-                    0
-                ),
-            });
-        });
-    });
-
-    // En çok nüshası olan baskı önce: bir okuyucunun aradığı baskı, genellikle
-    // kütüphanelerin çoğunun tuttuğu baskıdır.
-    return editions.sort((left, right) => right.item_count - left.item_count);
-}
-
-
-function editionLabel(manifestation) {
-    const parts = [];
-
-    if (manifestation.publication_date) {
-        parts.push(manifestation.publication_date);
-    }
-
-    if (manifestation.publication_statement) {
-        parts.push(manifestation.publication_statement);
-    }
-
-    if (!parts.length) {
-        parts.push("Baskı bilgisi yok");
-    }
-
-    return parts.join(" · ");
-}
-
-
-/* Kartta gösterilen baskı ve kütüphane sayısı. Sınırsız bırakmak, tek bir eserin
- * altında yüz kurum listelemek demekti -- bir kez tam olarak bu oldu ve gerçek
- * kütüphaneler listeyi boğdu (§0.23). Gerisi sayıyla bildirilir; tamamı detayda. */
-const EDITIONS_ON_CARD = 3;
-const LIBRARIES_PER_EDITION = 4;
-
-
-function renderWorkHoldings(work) {
-    const editions = workEditions(work);
-
-    if (editions.length === 0) {
-        return `
-            <div class="result-holdings empty">
-                Bu eseri tutan kütüphane kaydı yok.
-            </div>
-        `;
-    }
-
-    const totalCopies = editions.reduce(
-        (sum, edition) => sum + edition.item_count,
-        0
-    );
-
-    const libraries = new Set();
-
-    editions.forEach(edition => {
-        edition.holdings.forEach(holding => {
-            libraries.add(holding.entity_id || holding.name || "kaydedilmemis");
-        });
-    });
-
-    const shownEditions = editions.slice(0, EDITIONS_ON_CARD);
-    const restEditions = editions.length - shownEditions.length;
-
-    const rows = shownEditions
-        .map(edition => {
-            const names = edition.holdings
-                .slice(0, LIBRARIES_PER_EDITION)
-                .map(holding => escapeHtml(holding.name) || "Kurum kaydedilmemiş")
-                .join(" · ");
-
-            const rest = edition.holdings.length - LIBRARIES_PER_EDITION;
-
-            return `
-                <div class="result-edition">
-                    <div class="result-edition-head">
-                        <span class="result-edition-label">
-                            ${escapeHtml(edition.label)}
-                        </span>
-
-                        <span class="result-edition-count">
-                            ${edition.item_count} nüsha ·
-                            ${edition.holdings.length} kütüphane
-                        </span>
-                    </div>
-
-                    <div class="result-edition-libraries">
-                        ${names}
-                        ${rest > 0 ? ` · ve ${rest} kütüphane daha` : ""}
-                    </div>
-                </div>
-            `;
-        })
-        .join("");
-
-    return `
-        <div class="result-holdings">
-            <div class="result-holdings-total">
-                ${totalCopies} nüsha ·
-                ${editions.length} baskı ·
-                ${libraries.size} kütüphane
-            </div>
-
-            ${rows}
-
-            ${
-                restEditions > 0
-                    ? `
-                        <div class="result-holding rest">
-                            ve ${restEditions} baskı daha · kaydı görüntüleyin
-                        </div>
-                      `
-                    : ""
-            }
-        </div>
-    `;
-}
-
 
 function renderWork(work) {
     const authors = work.authors || [];
@@ -242,7 +103,7 @@ function renderWork(work) {
                     : ""
             }
 
-            ${renderWorkHoldings(work)}
+
 
             <button
                 type="button"
@@ -261,117 +122,151 @@ function renderWork(work) {
    ARAMA
 --------------------------------------------------------- */
 
-async function performSearch(query) {
+function renderInstitutionPanel(institutions, matchingLibraries, selectedLibraryId) {
+    if (!institutions.length) {
+        institutionPanel.innerHTML = `
+            <h2>Üniversiteler / kurumlar</h2>
+            <p class="institution-hint">Henüz koleksiyon kaydı bulunan bir kurum yok.</p>
+        `;
+        return;
+    }
+
+    const matchingCounts = new Map(
+        matchingLibraries.map(item => [String(item.value), item.count])
+    );
+
+    institutionPanel.innerHTML = `
+        <div class="institution-panel-heading">
+            <h2>Üniversiteler / kurumlar</h2>
+            ${selectedLibraryId ? `<button type="button" class="clear-institution-filter">Tüm kurumlar</button>` : ""}
+        </div>
+        <p class="institution-hint">Kurumun toplam koleksiyon kaydı; parantez içi sayı aramanızla eşleşen eser sayısıdır.</p>
+        <ul class="institution-list">
+            ${institutions.map(institution => {
+                const id = String(institution.value);
+                const matches = matchingCounts.get(id);
+                const selected = id === String(selectedLibraryId);
+                return `
+                    <li>
+                        <button type="button" class="institution-filter${selected ? " selected" : ""}"
+                            data-institution-id="${escapeHtml(id)}" aria-pressed="${selected}">
+                            <span class="institution-name">${escapeHtml(institution.label)}</span>
+                            <span class="institution-count">${Number(institution.count).toLocaleString("tr-TR")} koleksiyon kaydı${matches === undefined ? "" : ` · ${Number(matches).toLocaleString("tr-TR")} eşleşen eser`}</span>
+                        </button>
+                    </li>
+                `;
+            }).join("")}
+        </ul>
+    `;
+}
+
+
+async function performSearch(query, { searchField = "all", searchMode = "keyword", libraryId = null } = {}) {
     const cleanQuery = query.trim();
 
     if (!cleanQuery) {
-        statusBox.textContent =
-            "Lütfen bir arama terimi girin.";
-
+        statusBox.textContent = "Lütfen bir arama terimi girin.";
         resultsBox.innerHTML = "";
+        institutionPanel.innerHTML = `
+            <h2>Üniversiteler / kurumlar</h2>
+            <p class="institution-hint">Kurum toplamları arama yaptıktan sonra gösterilir.</p>
+        `;
         return;
     }
 
     searchInput.value = cleanQuery;
-
-    statusBox.textContent =
-        `"${cleanQuery}" aranıyor...`;
-
+    searchFieldSelect.value = searchField;
+    searchModeSelect.value = searchMode;
+    statusBox.textContent = searchMode === "semantic"
+        ? `"${cleanQuery}" anlam benzerliğine göre aranıyor...`
+        : `"${cleanQuery}" aranıyor...`;
     resultsBox.innerHTML = "";
 
+    const params = new URLSearchParams({
+        q: cleanQuery,
+        search_field: searchField,
+        search_mode: searchMode,
+    });
+    if (libraryId) {
+        params.set("library_id", libraryId);
+    }
+    window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
+
     try {
-
-        const response = await fetch(
-            `/search?q=${encodeURIComponent(cleanQuery)}`
-        );
-
+        const response = await fetch(`/search?${params}`);
         if (!response.ok) {
-            throw new Error(
-                `HTTP ${response.status}`
-            );
+            const detail = await response.text();
+            throw new Error(`HTTP ${response.status}: ${detail}`);
         }
 
         const data = await response.json();
+        renderInstitutionPanel(
+            data.institutions || [],
+            data.facets?.library || [],
+            libraryId
+        );
 
-        if (
-            !data.results ||
-            data.results.length === 0
-        ) {
-            statusBox.textContent =
-                `"${cleanQuery}" için sonuç bulunamadı.`;
-
+        if (!data.results || data.results.length === 0) {
+            statusBox.textContent = `"${cleanQuery}" için sonuç bulunamadı.`;
             return;
         }
 
-        // The API caps the result set before duplicates are collapsed, so a
-        // full page means "there may be more". Saying so is better than letting
-        // the reader assume these are all the matches.
         statusBox.textContent = data.truncated
-            ? `${data.count} kayıt bulundu (ilk ${data.count} gösteriliyor — ` +
-              `daha fazlası için arama terimini daraltın).`
+            ? `${data.count} kayıt bulundu (ilk ${data.count} gösteriliyor — daha fazlası için arama terimini daraltın).`
             : `${data.count} kayıt bulundu.`;
-
-        resultsBox.innerHTML =
-            data.results
-                .map(renderWork)
-                .join("");
-
+        resultsBox.innerHTML = data.results.map(renderWork).join("");
     } catch (error) {
-
-        console.error(
-            "LibraryHub arama hatası:",
-            error
-        );
-
-        statusBox.textContent =
-            "Arama sırasında bir hata oluştu.";
-
+        console.error("LibraryHub arama hatası:", error);
+        statusBox.textContent = `Arama yapılamadı: ${error.message}`;
         resultsBox.innerHTML = `
-            <div class="result-card">
-                API bağlantısı kurulamadı.
-            </div>
+            <div class="result-card">${escapeHtml(error.message)}</div>
         `;
     }
 }
 
 
-/* ---------------------------------------------------------
-   ARAMA FORMU
---------------------------------------------------------- */
-
-searchForm.addEventListener(
-    "submit",
-    event => {
-
-        event.preventDefault();
-
-        performSearch(
-            searchInput.value
-        );
-    }
-);
-
-
-/* ---------------------------------------------------------
-   ÖRNEK ARAMA BUTONLARI
---------------------------------------------------------- */
-
-document
-    .querySelectorAll("[data-query]")
-    .forEach(button => {
-
-        button.addEventListener(
-            "click",
-            () => {
-
-                performSearch(
-                    button.dataset.query
-                );
-            }
-        );
-
+searchForm.addEventListener("submit", event => {
+    event.preventDefault();
+    performSearch(searchInput.value, {
+        searchField: searchFieldSelect.value,
+        searchMode: searchModeSelect.value,
+        libraryId: new URLSearchParams(window.location.search).get("library_id"),
     });
+});
 
+institutionPanel.addEventListener("click", event => {
+    const filterButton = event.target.closest("[data-institution-id]");
+    const clearButton = event.target.closest(".clear-institution-filter");
+    const params = new URLSearchParams(window.location.search);
+    const libraryId = filterButton?.dataset.institutionId || null;
+
+    if (!filterButton && !clearButton) {
+        return;
+    }
+
+    performSearch(searchInput.value, {
+        searchField: searchFieldSelect.value,
+        searchMode: searchModeSelect.value,
+        libraryId: libraryId && libraryId !== params.get("library_id") ? libraryId : null,
+    });
+});
+
+document.querySelectorAll("[data-query]").forEach(button => {
+    button.addEventListener("click", () => {
+        searchFieldSelect.value = "all";
+        searchModeSelect.value = "keyword";
+        performSearch(button.dataset.query, { searchField: "all", searchMode: "keyword", libraryId: null });
+    });
+});
+
+const initialParams = new URLSearchParams(window.location.search);
+if (initialParams.has("q")) {
+    performSearch(initialParams.get("q"), {
+        searchField: initialParams.get("search_field") || "all",
+        searchMode: initialParams.get("search_mode") || "keyword",
+        libraryId: initialParams.get("library_id"),
+    });
+}
 
 /* ---------------------------------------------------------
    ESER DETAYI
@@ -384,6 +279,10 @@ function renderDetailHoldings(holdings) {
 
     const totalCopies = holdings.reduce(
         (sum, holding) => sum + (holding.item_count || 0),
+        0
+    );
+    const totalHoldings = holdings.reduce(
+        (sum, holding) => sum + (holding.holdings || 0),
         0
     );
 
@@ -413,7 +312,8 @@ function renderDetailHoldings(holdings) {
                 </div>
 
                 <div class="holding-count">
-                    ${holding.item_count} nüsha
+                    ${holding.holdings || 0} koleksiyon kaydı ·
+                    ${holding.item_count || 0} nüsha
                 </div>
 
                 <div class="holding-availability">
@@ -426,7 +326,7 @@ function renderDetailHoldings(holdings) {
     return `
         <div class="detail-holdings">
             <div class="detail-item-title">
-                ${totalCopies} nüsha · ${holdings.length} kurum
+                ${totalHoldings} koleksiyon kaydı · ${totalCopies} nüsha · ${holdings.length} kurum
             </div>
 
             <div class="holdings-list">
@@ -666,7 +566,8 @@ async function openWorkDetail(workId) {
         );
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+            const detail = await response.text();
+            throw new Error(`HTTP ${response.status}: ${detail}`);
         }
 
         const work = await response.json();
@@ -703,7 +604,8 @@ async function openConcept(conceptId) {
         );
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+            const detail = await response.text();
+            throw new Error(`HTTP ${response.status}: ${detail}`);
         }
 
         const data = await response.json();
@@ -804,7 +706,8 @@ async function openPerson(personId) {
         );
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+            const detail = await response.text();
+            throw new Error(`HTTP ${response.status}: ${detail}`);
         }
 
         const person = await response.json();
@@ -921,7 +824,8 @@ async function openCollectiveAgent(agentId) {
         );
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+            const detail = await response.text();
+            throw new Error(`HTTP ${response.status}: ${detail}`);
         }
 
         const agent = await response.json();
@@ -1141,7 +1045,7 @@ function showHome() {
 }
 
 
-async function showSearch(query) {
+async function showSearch(query, options = {}) {
     const cleanQuery = query.trim();
 
     if (!cleanQuery) {
@@ -1150,7 +1054,15 @@ async function showSearch(query) {
 
     lastSearchQuery = cleanQuery;
 
-    await originalPerformSearch(cleanQuery);
+    const params = new URLSearchParams(window.location.search);
+    const searchOptions = {
+        searchField: options.searchField ?? params.get("search_field") ?? "all",
+        searchMode: options.searchMode ?? params.get("search_mode") ?? "keyword",
+        libraryId: Object.prototype.hasOwnProperty.call(options, "libraryId")
+            ? options.libraryId
+            : params.get("library_id"),
+    };
+    await originalPerformSearch(cleanQuery, searchOptions);
 
     currentView = {
         type: "search",
@@ -1283,8 +1195,8 @@ window.addEventListener(
     performSearch() çağırdığı için onları da yeni
     navigasyon sistemine bağlıyoruz.
 */
-performSearch = async function(query) {
-    return showSearch(query);
+performSearch = async function(query, options) {
+    return showSearch(query, options);
 };
 
 

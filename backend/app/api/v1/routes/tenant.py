@@ -231,7 +231,7 @@ def _assert_holding_is_ours(db: Session, holding_id: UUID) -> None:
     if found is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Holding bulunamadı.",
+            detail="Koleksiyon kaydı bulunamadı.",
         )
 
 
@@ -302,6 +302,16 @@ def summary(
                   WHERE availability_status = 'available') AS available,
                 (SELECT count(*) FROM tenant.items
                   WHERE availability_status = 'on_loan') AS on_loan,
+                (SELECT count(*) FROM tenant.items
+                  WHERE availability_status = 'reference') AS reference,
+                (SELECT count(*) FROM tenant.items
+                  WHERE availability_status = 'lost') AS lost,
+                (SELECT count(*) FROM tenant.items
+                  WHERE availability_status = 'unknown') AS unknown,
+                (SELECT count(*) FROM tenant.items
+                  WHERE availability_status NOT IN
+                    ('available', 'on_loan', 'reference', 'lost', 'unknown'))
+                    AS other_status,
                 (SELECT count(*) FROM control.branches) AS branches,
                 (SELECT count(*) FROM tenant.change_proposals) AS proposals,
                 (SELECT count(*) FROM tenant.change_proposals
@@ -317,9 +327,144 @@ def summary(
         "items": row["items"],
         "available": row["available"],
         "on_loan": row["on_loan"],
+        "reference": row["reference"],
+        "lost": row["lost"],
+        "unknown": row["unknown"],
+        "other_status": row["other_status"],
         "branches": row["branches"],
         "proposals": row["proposals"],
         "pending_proposals": row["pending_proposals"],
+    }
+
+
+@router.get("/data-quality")
+def data_quality(
+    limit: int = Query(default=200, ge=1, le=500),
+    db: Session = Depends(tenant_db),
+    user: User = Depends(current_user),
+):
+    """Return actionable catalog checks, scoped to the signed-in tenant."""
+
+    rows = db.execute(
+        text(
+            """
+            WITH issues AS (
+                SELECT
+                    'empty_physical_holding' AS issue_key,
+                    h.id AS record_id,
+                    h.local_holding_key AS holding_key,
+                    b.name AS branch_name,
+                    NULL AS barcode,
+                    NULL AS shelfmark,
+                    h.call_number AS call_number
+                FROM tenant.holdings h
+                LEFT JOIN control.branches b ON b.id = h.branch_id
+                WHERE h.holding_type = 'physical'
+                  AND h.status = 'active'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM tenant.items i
+                      WHERE i.holding_id = h.id
+                        AND i.lifecycle_status = 'active'
+                  )
+
+                UNION ALL
+
+                SELECT
+                    'missing_barcode' AS issue_key,
+                    i.id AS record_id,
+                    h.local_holding_key AS holding_key,
+                    b.name AS branch_name,
+                    i.barcode AS barcode,
+                    i.shelfmark AS shelfmark,
+                    h.call_number AS call_number
+                FROM tenant.items i
+                JOIN tenant.holdings h ON h.id = i.holding_id
+                LEFT JOIN control.branches b ON b.id = h.branch_id
+                WHERE i.lifecycle_status = 'active'
+                  AND i.barcode IS NULL
+
+                UNION ALL
+
+                SELECT
+                    'missing_shelfmark' AS issue_key,
+                    i.id AS record_id,
+                    h.local_holding_key AS holding_key,
+                    b.name AS branch_name,
+                    i.barcode AS barcode,
+                    i.shelfmark AS shelfmark,
+                    h.call_number AS call_number
+                FROM tenant.items i
+                JOIN tenant.holdings h ON h.id = i.holding_id
+                LEFT JOIN control.branches b ON b.id = h.branch_id
+                WHERE i.lifecycle_status = 'active'
+                  AND h.holding_type = 'physical'
+                  AND NULLIF(TRIM(i.shelfmark), '') IS NULL
+                  AND NULLIF(TRIM(h.call_number), '') IS NULL
+            ),
+            ranked AS (
+                SELECT
+                    issues.*,
+                    count(*) OVER (PARTITION BY issue_key) AS issue_count,
+                    row_number() OVER (
+                        PARTITION BY issue_key
+                        ORDER BY holding_key, record_id
+                    ) AS issue_number
+                FROM issues
+            )
+            SELECT issue_key, record_id, holding_key, branch_name, barcode,
+                   shelfmark, call_number, issue_count
+            FROM ranked
+            WHERE issue_number <= :limit
+            ORDER BY issue_key, holding_key, record_id
+            """
+        ),
+        {"limit": limit},
+    ).mappings().all()
+
+    definitions = {
+        "empty_physical_holding": {
+            "title": "Nüshası olmayan koleksiyon kaydı",
+            "message": "Etkin fiziksel koleksiyon kaydına henüz nüsha eklenmemiş.",
+            "record_type": "holding",
+        },
+        "missing_barcode": {
+            "title": "Barkodsuz nüsha",
+            "message": "Aktif nüshanın barkod alanı boş.",
+            "record_type": "item",
+        },
+        "missing_shelfmark": {
+            "title": "Yer numarası olmayan nüsha",
+            "message": "Nüsha ve koleksiyon kaydı için yer numarası girilmemiş.",
+            "record_type": "item",
+        },
+    }
+    checks = {
+        key: {**definition, "count": 0, "records": []}
+        for key, definition in definitions.items()
+    }
+
+    for row in rows:
+        check = checks[row["issue_key"]]
+        check["count"] = row["issue_count"]
+        check["records"].append(
+            {
+                "id": str(row["record_id"]),
+                "holding_key": row["holding_key"],
+                "branch_name": row["branch_name"],
+                "barcode": row["barcode"],
+                "shelfmark": row["shelfmark"],
+                "call_number": row["call_number"],
+            }
+        )
+
+    return {
+        "tenant_id": str(user.tenant_id),
+        "total_findings": sum(check["count"] for check in checks.values()),
+        "checks": [
+            {"key": key, **check}
+            for key, check in checks.items()
+        ],
     }
 
 

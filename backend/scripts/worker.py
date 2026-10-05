@@ -25,15 +25,20 @@ somebody's belief about how fast the machine is.
 
 from __future__ import annotations
 
+import json
 import os
+import uuid
 import signal
+from urllib.request import Request, urlopen
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.types import Uuid
 
 from app.services.search_index import consume, stats
 
@@ -46,6 +51,7 @@ IDLE_SECONDS = float(os.environ.get("LIBRARYHUB_WORKER_INTERVAL", "5"))
 # How many events one pass takes. A backlog is drained in batches rather than in
 # one transaction that grows until it fails.
 BATCH = int(os.environ.get("LIBRARYHUB_WORKER_BATCH", "1000"))
+SEMANTIC_URL = os.environ.get("SEMANTIC_SEARCH_URL")
 
 _running = True
 
@@ -77,6 +83,97 @@ def lag(connection) -> float | None:
     return float(seconds) if seconds is not None else None
 
 
+def semantic_request(path: str, payload: dict | None = None) -> dict:
+    request = Request(
+        f"{SEMANTIC_URL.rstrip('/')}{path}",
+        data=json.dumps(payload).encode("utf-8") if payload is not None else None,
+        headers={"Content-Type": "application/json"} if payload is not None else {},
+        method="POST" if payload is not None else "GET",
+    )
+    with urlopen(request, timeout=120) as response:
+        return json.loads(response.read())
+
+
+def semantic_document(row) -> dict:
+    return {
+        "entity_id": str(row["entity_id"]),
+        "entity_type": row["entity_type"],
+        "label": row["label"],
+        "body": row["body"],
+        "work_ids": [str(work_id) for work_id in row["work_ids"]],
+    }
+
+
+def initialize_semantic_index(engine) -> None:
+    status = semantic_request("/status")
+    if status["ready"]:
+        print(f"  semantik indeks hazır: {status['point_count']} belge", flush=True)
+        return
+
+    semantic_request("/reset", {})
+    after = None
+    indexed = 0
+    with engine.connect() as connection:
+        while True:
+            rows = connection.execute(
+                text(
+                    "select entity_id, entity_type, label, body, work_ids "
+                    "from public.search_documents "
+                    "where cast(:after as uuid) is null "
+                    "   or entity_id > cast(:after as uuid) "
+                    "order by entity_id limit :batch"
+                ),
+                {"after": after, "batch": BATCH},
+            ).mappings().all()
+            if not rows:
+                break
+            for start in range(0, len(rows), 256):
+                semantic_request(
+                    "/sync",
+                    {
+                        "documents": [
+                            semantic_document(row)
+                            for row in rows[start : start + 256]
+                        ]
+                    },
+                )
+            indexed += len(rows)
+            after = str(rows[-1]["entity_id"])
+
+    semantic_request("/ready", {})
+    print(f"  semantik indeks eşitlendi: {indexed} belge", flush=True)
+
+
+def sync_semantic_changes(connection, document_ids: list[str]) -> None:
+    if not document_ids:
+        return
+
+    ids = [uuid.UUID(entity_id) for entity_id in document_ids]
+    statement = text(
+        "select entity_id, entity_type, label, body, work_ids "
+        "from public.search_documents where entity_id = any(:ids)"
+    ).bindparams(bindparam("ids", type_=ARRAY(Uuid)))
+    rows = connection.execute(statement, {"ids": ids}).mappings().all()
+    existing_ids = {str(row["entity_id"]) for row in rows}
+    for start in range(0, len(rows), 256):
+        semantic_request(
+            "/sync",
+            {
+                "documents": [
+                    semantic_document(row)
+                    for row in rows[start : start + 256]
+                ]
+            },
+        )
+
+    deleted_ids = [entity_id for entity_id in document_ids if entity_id not in existing_ids]
+    for start in range(0, len(deleted_ids), 1000):
+        semantic_request(
+            "/sync",
+            {"delete_ids": deleted_ids[start : start + 1000]},
+        )
+
+
 def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -88,12 +185,23 @@ def main() -> int:
         flush=True,
     )
 
+    if SEMANTIC_URL:
+        while _running:
+            try:
+                initialize_semantic_index(engine)
+                break
+            except Exception as error:  # noqa: BLE001 - keep retrying until local index is reachable
+                print(f"  semantik indeks baslatilamadi: {type(error).__name__}: {error}", flush=True)
+                time.sleep(IDLE_SECONDS)
+
     idle_passes = 0
 
     while _running:
         try:
             with engine.begin() as connection:
                 result = consume(connection, limit=BATCH)
+                if SEMANTIC_URL and result["events"]:
+                    sync_semantic_changes(connection, result["document_ids"])
                 current_lag = lag(connection)
 
             if result["events"]:

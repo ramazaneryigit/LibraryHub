@@ -134,7 +134,7 @@ function reportHtml(report) {
         <div class="summary-grid">
             <div class="summary-card"><div class="summary-value">${report.total}</div><div class="summary-label">Alınan</div></div>
             <div class="summary-card"><div class="summary-value">${report.created}</div><div class="summary-label">Yeni</div></div>
-            <div class="summary-card"><div class="summary-value">${report.holdings ?? 0}</div><div class="summary-label">Holding</div></div>
+            <div class="summary-card"><div class="summary-value">${report.holdings ?? 0}</div><div class="summary-label">Koleksiyon kaydı</div></div>
             <div class="summary-card"><div class="summary-value">${report.unchanged}</div><div class="summary-label">Zaten vardı</div></div>
             <div class="summary-card"><div class="summary-value">${report.failed}</div><div class="summary-label">Eşleşmedi</div></div>
         </div>

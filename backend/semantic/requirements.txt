@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+qdrant-client>=1.13,<1.15
+fastembed

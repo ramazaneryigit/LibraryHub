@@ -118,7 +118,7 @@ async function render() {
 const CARDS = [
     ["titles", "Başlık"],
     ["manifestations", "Baskı"],
-    ["holdings", "Holding"],
+    ["holdings", "Koleksiyon kaydı"],
     ["libraries", "Kütüphane"],
     ["upcoming", "Yakında"],
 ];
@@ -147,7 +147,7 @@ async function loadTitles() {
                 <div class="grow">
                     <div class="title">${escapeHtml(title.title)}</div>
                     <div class="sub">
-                        ${title.manifestations} baskı · ${title.holdings} holding
+                        ${title.manifestations} baskı · ${title.holdings} koleksiyon kaydı
                     </div>
                 </div>
                 <span class="badge ${title.libraries ? "applied" : ""}">
@@ -181,7 +181,7 @@ document.getElementById("titles-list").addEventListener("click", async event => 
                                 <div class="title">${escapeHtml(row.library)}</div>
                                 <div class="sub">${escapeHtml(row.institution)} · ${escapeHtml(row.branch)} · ${escapeHtml(row.edition) || "tarih yok"}</div>
                             </div>
-                            <span class="badge">${row.holdings} holding</span>
+                            <span class="badge">${row.holdings} koleksiyon kaydı</span>
                         </div>
                     `).join("")}
                 </div>

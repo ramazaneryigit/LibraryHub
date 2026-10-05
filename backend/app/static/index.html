@@ -43,6 +43,31 @@
             <button type="submit">Ara</button>
         </form>
 
+        <details class="advanced-search">
+                <summary>Gelişmiş arama</summary>
+                <div class="advanced-search-fields">
+                    <label for="search-mode">Arama yöntemi</label>
+                    <select id="search-mode">
+                        <option value="keyword">Anahtar kelime</option>
+                        <option value="semantic">Semantik (anlam benzerliği)</option>
+                    </select>
+                    <label for="search-field">Aranacak alan</label>
+                    <select id="search-field">
+                        <option value="all">Tüm alanlar</option>
+                        <option value="title">Eser adı</option>
+                        <option value="author">Yazar</option>
+                        <option value="publisher">Yayınevi</option>
+                        <option value="isbn">ISBN</option>
+                        <option value="issn">ISSN</option>
+                        <option value="doi">DOI</option>
+                        <option value="orcid">ORCID</option>
+                        <option value="university">Üniversite / kurum</option>
+                        <option value="inventory">Demirbaş / barkod</option>
+                    </select>
+                    <p>Seçilen alana göre aramak için yukarıdaki arama kutusuna terimi yazın.</p>
+                </div>
+            </details>
+
         <div class="examples">
             Örnek:
             <button type="button" data-query="Suç ve Ceza">Suç ve Ceza</button>
@@ -58,7 +83,13 @@
             Aramaya başlamak için yukarıdaki kutuyu kullanın.
         </div>
 
-        <div id="results" class="results"></div>
+        <div class="search-layout">
+            <div id="results" class="results"></div>
+            <aside id="institution-panel" class="institution-panel" aria-label="Üniversite ve kurumlara göre kayıtlar">
+                <h2>Üniversiteler / kurumlar</h2>
+                <p class="institution-hint">Kurum toplamları arama yaptıktan sonra gösterilir.</p>
+            </aside>
+        </div>
     </section>
 
 </main>

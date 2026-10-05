@@ -205,7 +205,7 @@ async function render() {
     say("");
 
     if (view === "panel") {
-        await loadSummary();
+        await Promise.all([loadSummary(), loadDataQuality()]);
     } else if (view === "holdings") {
         await loadHoldings();
     } else if (view === "items") {
@@ -219,7 +219,7 @@ async function render() {
 /* --------------------------------------------------------- panel */
 
 const SUMMARY_CARDS = [
-    ["holding", "Holding"],
+    ["holding", "Koleksiyon kaydı"],
     ["published", "Yayında"],
     ["item", "Nüsha"],
     ["available", "Rafta"],
@@ -249,10 +249,150 @@ async function loadSummary() {
             </div>
         `)
         .join("");
+
+    renderInventoryChart(summary);
+}
+
+function renderInventoryChart(data) {
+    const statuses = [
+        ["Rafta", data.available, "available"],
+        ["Ödünçte", data.on_loan, "on-loan"],
+        ["Danışma", data.reference, "reference"],
+        ["Kayıp", data.lost, "lost"],
+        ["Durumu bilinmiyor", data.unknown + data.other_status, "unknown"],
+    ];
+    const maximum = Math.max(1, ...statuses.map(([, count]) => count));
+
+    document.getElementById("inventory-chart").innerHTML = statuses.map(
+        ([label, count, className]) => `
+            <div class="chart-row" aria-label="${escapeHtml(label)}: ${count}">
+                <span class="chart-label">${escapeHtml(label)}</span>
+                <span class="chart-track"><span class="chart-bar ${className}"
+                    style="width:${Math.round(count / maximum * 100)}%"></span></span>
+                <strong class="chart-count">${count}</strong>
+            </div>
+        `
+    ).join("");
 }
 
 
-/* --------------------------------------------------------- holdingler */
+const QUALITY_CHECKS = [
+    ["empty_physical_holding", "Nüshası olmayan koleksiyon kaydı"],
+    ["missing_barcode", "Barkodsuz nüsha"],
+    ["missing_shelfmark", "Yer numarası olmayan nüsha"],
+];
+
+let qualityChecks = [];
+let selectedQualityCheck = null;
+
+async function loadDataQuality() {
+    const result = await api("/tenant/data-quality");
+    qualityChecks = result.checks;
+
+    document.getElementById("quality-summary").textContent = result.total_findings
+        ? `${result.total_findings} olası bulgu · ayrıntılar için bir kontrol seçin.`
+        : "Kontrol edilen alanlarda olası eksik bulunmadı.";
+
+    document.getElementById("quality-grid").innerHTML = QUALITY_CHECKS
+        .map(([key, fallbackTitle]) => {
+            const check = qualityChecks.find(entry => entry.key === key);
+            const title = check ? check.title : fallbackTitle;
+            const count = check ? check.count : 0;
+            return `
+                <button type="button" class="summary-card quality-card ${selectedQualityCheck === key ? "selected" : ""}"
+                        data-quality-check="${escapeHtml(key)}" aria-expanded="${selectedQualityCheck === key}">
+                    <span class="summary-value">${count}</span>
+                    <span class="summary-label">${escapeHtml(title)}</span>
+                </button>
+            `;
+        })
+        .join("");
+
+    renderQualityDetail();
+}
+
+function renderQualityDetail() {
+    const detail = document.getElementById("quality-detail");
+    const check = qualityChecks.find(entry => entry.key === selectedQualityCheck);
+
+    if (!check) {
+        detail.hidden = true;
+        detail.innerHTML = "";
+        return;
+    }
+
+    detail.hidden = false;
+
+    if (!check.count) {
+        detail.innerHTML = `<div class="item"><div class="grow"><div class="title">${escapeHtml(check.title)}</div><div class="sub">Bu kontrol kuralında bulgu yok.</div></div></div>`;
+        return;
+    }
+
+    const recordRows = check.records.map(record => {
+        const placement = record.shelfmark || record.call_number || "Yer numarası yok";
+        const recordLabel = check.record_type === "holding"
+            ? record.holding_key
+            : record.barcode || "Barkodsuz nüsha";
+        const destination = check.record_type === "holding" ? "holdings" : "items";
+        return `
+            <div class="item">
+                <div class="grow">
+                    <div class="title">${escapeHtml(recordLabel)}</div>
+                    <div class="sub">
+                        Koleksiyon kodu: ${escapeHtml(record.holding_key)} ·
+                        ${escapeHtml(record.branch_name || "Şube bilgisi yok")} ·
+                        ${escapeHtml(placement)}
+                    </div>
+                    <div class="sub">${escapeHtml(check.message)}</div>
+                </div>
+                <button type="button" data-quality-view="${destination}">Kayıtları aç</button>
+            </div>
+        `;
+    }).join("");
+
+    const omitted = check.count - check.records.length;
+    detail.innerHTML = recordRows + (omitted > 0
+        ? `<div class="muted quality-truncated">İlk ${check.records.length} kayıt gösteriliyor; toplam ${check.count} bulgu var.</div>`
+        : "");
+}
+
+document.getElementById("quality-grid").addEventListener("click", event => {
+    const button = event.target.closest("[data-quality-check]");
+
+    if (!button) {
+        return;
+    }
+
+    selectedQualityCheck = selectedQualityCheck === button.dataset.qualityCheck
+        ? null
+        : button.dataset.qualityCheck;
+    loadDataQuality().catch(error => say(error.message, "bad"));
+});
+
+document.getElementById("quality-detail").addEventListener("click", event => {
+    const button = event.target.closest("[data-quality-view]");
+
+    if (button) {
+        window.location.hash = `#/${button.dataset.qualityView}`;
+    }
+});
+
+document.getElementById("quality-refresh").addEventListener("click", () => {
+    loadDataQuality().catch(error => say(error.message, "bad"));
+});
+
+function holdingTypeLabel(value) {
+    return ({ physical: "Basılı", electronic: "Elektronik", microform: "Mikroform", other: "Diğer" })[value] || value;
+}
+
+function availabilityLabel(value) {
+    return ({ available: "Rafta", on_loan: "Ödünçte", reference: "Danışma", lost: "Kayıp", unknown: "Bilinmiyor" })[value] || value;
+}
+function holdingStatusLabel(value) {
+    return ({ active: "Etkin", closed: "Kapalı", suppressed: "Gizli" })[value] || value;
+}
+
+/* --------------------------------------------------------- koleksiyon kayıtları */
 
 let holdings = [];
 let branches = [];
@@ -264,7 +404,7 @@ async function loadHoldings() {
     holdings = result.holdings;
 
     document.getElementById("holding-summary").textContent =
-        `${result.count} holding`;
+        `${result.count} koleksiyon kaydı`;
 
     document.getElementById("holding-list").innerHTML = holdings.length
         ? holdings.map(holding => `
@@ -272,17 +412,17 @@ async function loadHoldings() {
                 <div class="grow">
                     <div class="title">${escapeHtml(holding.local_holding_key)}</div>
                     <div class="sub">
-                        ${escapeHtml(holding.holding_type)} ·
+                        ${escapeHtml(holdingTypeLabel(holding.holding_type))} ·
                         ${holding.item_count} nüsha ·
                         ${holding.call_number ? escapeHtml(holding.call_number) : "yer numarası yok"}
                     </div>
                 </div>
                 <span class="badge ${holding.status === "suppressed" ? "inactive" : ""}">
-                    ${escapeHtml(holding.status)}
+                    ${escapeHtml(holdingStatusLabel(holding.status))}
                 </span>
             </div>
         `).join("")
-        : '<div class="item"><div class="grow"><div class="sub">Henüz holding yok.</div></div></div>';
+        : '<div class="item"><div class="grow"><div class="sub">Henüz koleksiyon kaydı yok.</div></div></div>';
 
     // Nüsha formunun holding seçicisi buradan besleniyor.
     document.getElementById("item-holding").innerHTML = holdings
@@ -422,7 +562,7 @@ document.getElementById("holding-fields").addEventListener("submit", async event
         document.getElementById("holding-form").hidden = true;
         document.getElementById("holding-key").value = "";
         document.getElementById("holding-call").value = "";
-        say("Holding kaydedildi.", "ok");
+        say("Koleksiyon kaydı kaydedildi.", "ok");
 
         await loadHoldings();
     } catch (error) {
@@ -449,7 +589,7 @@ async function loadItems() {
         ? result.items.filter(item => item.id && filter)
         : result.items;
 
-    // `/tenant/items` holding kimliği döndürmüyor; süzgeç sunucuda yapılmalı.
+    // `/tenant/items` koleksiyon kaydı kimliği döndürmüyor; süzgeç sunucuda yapılmalı.
     // Bugün için hepsini gösterip kullanıcıya sayıyı söylemek dürüst olanı.
     document.getElementById("item-summary").textContent = `${result.count} nüsha`;
 
@@ -467,7 +607,7 @@ async function loadItems() {
                     </div>
                 </div>
                 <span class="badge ${item.availability_status === "available" ? "applied" : ""}">
-                    ${escapeHtml(item.availability_status)}
+                    ${escapeHtml(availabilityLabel(item.availability_status))}
                 </span>
                 <button type="button" class="item-edit" data-id="${escapeHtml(item.id)}">
                     Durum
@@ -483,7 +623,7 @@ document.getElementById("item-new").addEventListener("click", async () => {
     }
 
     if (!holdings.length) {
-        say("Önce bir holding ekleyin.", "bad");
+        say("Önce bir koleksiyon kaydı ekleyin.", "bad");
         return;
     }
 
@@ -527,7 +667,7 @@ document.getElementById("item-list").addEventListener("click", async event => {
     }
 
     const status = window.prompt(
-        "Yeni durum: available, on_loan, reference, lost, unknown",
+        "Yeni durum kodu (available=rafta, on_loan=ödünçte, reference=danışma, lost=kayıp, unknown=bilinmiyor)",
         "available"
     );
 

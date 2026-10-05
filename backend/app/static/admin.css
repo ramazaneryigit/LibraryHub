@@ -634,3 +634,115 @@ table.changes td.now {
         display: none;
     }
 }
+
+/* ------------------------------------------------------------ veri kontrolü */
+
+.quality-section {
+    margin: 24px 0 18px;
+}
+
+.quality-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+
+.quality-heading h2 {
+    margin: 0;
+    font-size: 20px;
+    color: var(--primary-800);
+}
+
+.quality-heading p {
+    margin: 4px 0 0;
+}
+
+.quality-card {
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+}
+
+.quality-card.selected {
+    border-color: var(--primary-600);
+    box-shadow: var(--ring);
+}
+
+.quality-card .summary-value,
+.quality-card .summary-label {
+    display: block;
+}
+
+.quality-footnote,
+.quality-truncated {
+    font-size: 13px;
+    margin: 10px 0 0;
+}
+/* --------------------------------------------------------------- grafik */
+
+.chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 18px 20px;
+    margin-bottom: 22px;
+    box-shadow: var(--shadow-xs);
+}
+
+.chart-card .quality-heading {
+    margin-bottom: 14px;
+}
+
+.chart-card .quality-heading p {
+    margin-bottom: 0;
+}
+
+.status-chart {
+    display: grid;
+    gap: 12px;
+}
+
+.chart-row {
+    display: grid;
+    grid-template-columns: minmax(120px, 170px) minmax(40px, 1fr) 42px;
+    align-items: center;
+    gap: 12px;
+}
+
+.chart-label {
+    color: var(--text-muted);
+    font-size: 13.5px;
+}
+
+.chart-track {
+    height: 13px;
+    overflow: hidden;
+    background: var(--surface-2);
+    border-radius: var(--radius-pill);
+}
+
+.chart-bar {
+    display: block;
+    height: 100%;
+    min-width: 0;
+    border-radius: inherit;
+    background: var(--primary-600);
+}
+
+.chart-bar.on-loan { background: #d49a39; }
+.chart-bar.reference { background: #537da5; }
+.chart-bar.lost { background: #bf625c; }
+.chart-bar.unknown { background: #8b929a; }
+
+.chart-count {
+    text-align: right;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 560px) {
+    .chart-card { padding: 15px; }
+    .chart-row { grid-template-columns: minmax(90px, 120px) minmax(30px, 1fr) 32px; gap: 8px; }
+}

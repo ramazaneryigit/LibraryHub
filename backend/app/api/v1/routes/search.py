@@ -1,17 +1,139 @@
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from ....core.text import normalize_text
 from ....db import get_db
 from ....db.models import Concept
-from ....services import search_index
+from ....services import search_index, semantic_search
+from ....services.semantic_search import SemanticSearchError
 from ....services.work_detail import build_work_detail
 from ....services.entity_merge import resolve_canonical_entity_id
 
 
 router = APIRouter(tags=["search"])
+
+
+def _merge_named_records(existing, incoming, *, key_field: str):
+    merged = {}
+
+    for item in [*(existing or []), *(incoming or [])]:
+        if item is None:
+            continue
+
+        identity = str(item.get(key_field) or item.get("name") or item.get("label") or "")
+
+        if not identity:
+            identity = str(item)
+
+        merged.setdefault(identity, item)
+
+    return list(merged.values())
+
+
+def _merge_expression_records(existing, incoming):
+    merged_by_id = {}
+
+    for expression in [*(existing or []), *(incoming or [])]:
+        if expression is None:
+            continue
+
+        expression_id = str(expression.get("entity_id") or "")
+        if not expression_id:
+            expression_id = str(expression)
+
+        if expression_id not in merged_by_id:
+            merged_by_id[expression_id] = dict(expression)
+            merged_by_id[expression_id]["manifestations"] = list(
+                expression.get("manifestations") or []
+            )
+            continue
+
+        merged = merged_by_id[expression_id]
+        merged["manifestations"] = _merge_named_records(
+            merged.get("manifestations", []),
+            expression.get("manifestations", []),
+            key_field="entity_id",
+        )
+
+        for field in ("language", "expression_form", "description", "identifiers", "nomens", "agents"):
+            if field in expression and expression[field]:
+                merged[field] = _merge_named_records(
+                    merged.get(field, []),
+                    expression.get(field, []),
+                    key_field="entity_id" if field != "identifiers" else "id",
+                )
+
+    return list(merged_by_id.values())
+
+
+def _primary_author_tokens(work_detail):
+    authors = (work_detail or {}).get("authors", [])
+
+    primary_names = []
+    for author in authors:
+        name = (author or {}).get("name")
+        if not name:
+            continue
+
+        role = str((author or {}).get("role") or "").strip().lower()
+        if role and role not in {"author", "creator", "main_author", "primary_author"}:
+            continue
+
+        primary_names.append(name)
+
+    if not primary_names:
+        primary_names = [
+            (author or {}).get("name")
+            for author in authors
+            if (author or {}).get("name")
+        ]
+
+    author_tokens = set()
+    for name in primary_names:
+        normalized = normalize_text(name) or ""
+        author_tokens.update(
+            token for token in normalized.replace(",", " ").split() if token
+        )
+
+    return tuple(sorted(author_tokens))
+
+
+def _work_result_key(work_detail):
+    title = normalize_text((work_detail or {}).get("canonical_title") or "")
+    return (title, _primary_author_tokens(work_detail))
+
+
+def _merge_duplicate_work_details(work_details):
+    merged_by_key = {}
+
+    for work_detail in work_details:
+        work_key = _work_result_key(work_detail)
+
+        if work_key not in merged_by_key:
+            merged_by_key[work_key] = work_detail
+            continue
+
+        current = merged_by_key[work_key]
+        current["authors"] = _merge_named_records(
+            current.get("authors", []),
+            work_detail.get("authors", []),
+            key_field="entity_id",
+        )
+        current["subjects"] = _merge_named_records(
+            current.get("subjects", []),
+            work_detail.get("subjects", []),
+            key_field="entity_id",
+        )
+        current["expressions"] = _merge_expression_records(
+            current.get("expressions", []),
+            work_detail.get("expressions", []),
+        )
+
+    return list(merged_by_key.values())
 
 
 @router.get("/search/concept/{concept_entity_id}")
@@ -114,7 +236,7 @@ def search_by_concept(
             "entity_id": str(canonical_concept_entity_id),
             "preferred_label": concept.preferred_label,
         },
-        "results": results,
+        "results": _merge_duplicate_work_details(results),
     }
 
 @router.get("/search")
@@ -127,6 +249,11 @@ def search(
     year: str | None = Query(default=None, pattern="^[0-9]{4}$"),
     library_id: UUID | None = Query(default=None),
     subject_id: UUID | None = Query(default=None),
+    search_mode: Literal["keyword", "semantic"] = Query(default="keyword"),
+    search_field: str | None = Query(
+        default=None,
+        pattern="^(all|title|author|publisher|isbn|issn|doi|orcid|university|inventory)$",
+    ),
     db: Session = Depends(get_db),
 ):
     # `min_length=1` lets a single space through, and the old code then built the
@@ -161,6 +288,13 @@ def search(
     #
     # Matching is on the normalized body, which is why `Ayse` finds `Ayşe`: the
     # same normalization the previous query was already applying to names.
+    semantic_matches = None
+    if search_mode == "semantic":
+        try:
+            semantic_matches = semantic_search.search(probe)
+        except SemanticSearchError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
     try:
         page = search_index.search_page(
             db,
@@ -172,6 +306,8 @@ def search(
             year=year,
             library_id=library_id,
             subject_id=subject_id,
+            search_field=search_field,
+            semantic_matches=semantic_matches,
         )
     except ValueError as error:
         raise HTTPException(
@@ -201,8 +337,11 @@ def search(
         seen_work_ids.add(canonical_work_entity_id)
         results.append(work_detail)
 
+    results = _merge_duplicate_work_details(results)
+
     return {
         "query": q,
+        "search_mode": search_mode,
         "count": len(results),
         "total": page["total"],
         "limit": limit,
@@ -210,12 +349,14 @@ def search(
         "has_more": page["has_more"],
         "next_cursor": page["next_cursor"],
         "facets": page["facets"],
+        "institutions": page["institutions"],
         "filters": {
             "work_type": work_type,
             "language": language,
             "year": year,
             "library_id": str(library_id) if library_id else None,
             "subject_id": str(subject_id) if subject_id else None,
+            "search_field": search_field,
         },
         "results": results,
     }

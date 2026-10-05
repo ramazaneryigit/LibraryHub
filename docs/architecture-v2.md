@@ -3087,18 +3087,21 @@ Arama indeksi **asla** doğruluk kaynağı olmaz; her zaman PostgreSQL'den tam y
 
 ## 10. AI / Semantic plane (D10)
 
-- Embedding'ler ve öneriler ayrı şemada/tabloda tutulur (`ai.*`).
-- **AI çıktısı global tablolara doğrudan yazmaz.** Ürettiği her öneri
-  `field_assertions` içinde `status='proposed'` + `source_system.system_type='ai'` olarak
-  girer ve insan onayı bekler.
-- Bu, §16'nın "AI çıktısı ile doğrulanmış veri ayrılmalı" ve "AI verisi provenance
-  taşımalı" gereksinimlerinin doğrudan karşılığıdır.
-- **Not:** Hedef PostgreSQL imajında `vector` extension'ı **mevcut değil** (ölçüldü).
-  Vektör arama gerektiğinde `pgvector` imajı eklenmeli **veya** ayrı bir servis
-  kullanılmalıdır. Bu, Aşama 6+ kararıdır; bugün gerekmez.
-
----
-
+- Embedding'ler ve öneriler ayrı şemada/serviste tutulur; AI çıktısı global
+  bibliyografik tablolara doğrudan yazmaz. Öneriler `field_assertions` içinde
+  `status='proposed'` ve AI kaynak bilgisiyle insan onayına sunulur.
+- Katalog semantik araması, Docker Compose içindeki yerel `semantic` servisini,
+  Qdrant vektör deposunu ve `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` embedding modelini
+  kullanır. Sorgular ve katalog metinleri harici bir inference API'sine gönderilmez.
+  İlk kurulumda model ağırlıkları model önbellek volume'una indirilir; sonraki
+  çalıştırmalarda önbellek kullanılır.
+- Vektörler, `public.search_documents` içeriğinden türetilir. Worker ilk açılışta
+  boş Qdrant indeksini bu belgelerle doldurur; sonraki değişiklikleri mevcut
+  outbox akışından eşzamanlar. PostgreSQL kaynak doğruluğu olmaya devam eder ve
+  anahtar kelime araması Qdrant kullanılmasa da çalışır.
+- Semantik sonuç adayları yine PostgreSQL'de kurum, gelişmiş alan ve diğer
+  katalog filtreleriyle daraltılır. Semantik servis hazır değilse semantik istek
+  açıkça HTTP 503 döndürür; anahtar kelime aramasına sessizce düşmez.
 ## 11. Event modeli
 
 `outbox_events` (§9.2) ile başlar. Örnek olay tipleri:

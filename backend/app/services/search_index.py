@@ -35,7 +35,7 @@ import math
 import uuid
 from typing import Any, Iterable, Mapping
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import Float, bindparam, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.sql.elements import TextClause
 from sqlalchemy.types import Uuid
@@ -444,7 +444,7 @@ def consume(executor, limit: int = 500) -> dict:
     )
 
     if not events:
-        return {"events": 0, "documents": 0}
+        return {"events": 0, "documents": 0, "document_ids": []}
 
     by_type: dict = {}
 
@@ -466,7 +466,11 @@ def consume(executor, limit: int = 500) -> dict:
         {"ids": [event["id"] for event in events]},
     )
 
-    return {"events": len(events), "documents": documents_written}
+    return {
+        "events": len(events),
+        "documents": documents_written,
+        "document_ids": sorted(str(entity_id) for entity_id in affected),
+    }
 
 
 def reindex(executor) -> int:
@@ -505,10 +509,72 @@ MATCHED_WORKS = """
 select unnest(d.work_ids) as work_id,
        max(similarity(d.body, :probe)) as score
 from public.search_documents d
-where d.body like :pattern
+where cast(:semantic_mode as boolean) = false
+  and d.body like :pattern
+  and (
+      cast(:search_field as text) is null
+      or cast(:search_field as text) = 'all'
+      or (cast(:search_field as text) = 'title' and d.entity_type = 'WORK')
+      or (cast(:search_field as text) = 'author' and d.entity_type = 'PERSON')
+      or (cast(:search_field as text) = 'publisher' and d.entity_type = 'ORGANIZATION')
+      or (cast(:search_field as text) = 'inventory' and d.entity_type = 'MANIFESTATION')
+      or (
+          cast(:search_field as text) in ('isbn', 'issn', 'doi', 'orcid')
+          and exists (
+              select 1 from public.identifiers i
+              where i.entity_id = d.entity_id
+                and upper(i.scheme) = upper(cast(:identifier_scheme as text))
+                and i.value ilike :raw_pattern
+          )
+      )
+  )
 group by 1
-"""
 
+union all
+
+select unnest(d.work_ids) as work_id, max(candidate.score)::real as score
+from unnest(
+    cast(:semantic_entity_ids as uuid[]),
+    cast(:semantic_scores as real[])
+) as candidate(entity_id, score)
+join public.search_documents d on d.entity_id = candidate.entity_id
+where cast(:semantic_mode as boolean) = true
+  and (
+      cast(:search_field as text) is null
+      or cast(:search_field as text) = 'all'
+      or (cast(:search_field as text) = 'title' and d.entity_type = 'WORK')
+      or (cast(:search_field as text) = 'author' and d.entity_type = 'PERSON')
+      or (cast(:search_field as text) = 'publisher' and d.entity_type = 'ORGANIZATION')
+      or (cast(:search_field as text) = 'inventory' and d.entity_type = 'MANIFESTATION')
+      or (
+          cast(:search_field as text) in ('isbn', 'issn', 'doi', 'orcid')
+          and exists (
+              select 1 from public.identifiers i
+              where i.entity_id = d.entity_id
+                and upper(i.scheme) = upper(cast(:identifier_scheme as text))
+                and i.value ilike :raw_pattern
+          )
+      )
+  )
+group by 1
+
+union all
+
+select w.entity_id, 1.0::real
+from public.works w
+where cast(:search_field as text) = 'university'
+  and exists (
+      select 1
+      from public.work_expression we
+      join public.expression_manifestation em
+        on em.expression_entity_id = we.expression_entity_id
+      join public.holdings_compat h
+        on h.manifestation_entity_id = em.manifestation_entity_id
+      join control.tenants t on t.id = h.tenant_id
+      where we.work_entity_id = w.entity_id
+        and t.display_name ilike :raw_pattern
+  )
+"""
 
 FILTERED_WORKS = """
 select m.work_id, m.score
@@ -628,6 +694,17 @@ order by facet, count desc, label, value
 """.replace("{matched_works}", MATCHED_WORKS)
 
 
+TENANT_TOTALS = """
+select t.id::text as value, t.display_name as label,
+       count(distinct h.holding_id) as count
+from control.tenants t
+join public.holdings_compat h on h.tenant_id = t.id
+where t.status = 'active'
+group by t.id, t.display_name
+order by count desc, t.display_name
+"""
+
+
 def _cursor_context(normalized: str, filters: Mapping[str, Any]) -> str:
     rendered = json.dumps(
         [normalized, {key: str(value) if value is not None else None for key, value in filters.items()}],
@@ -676,6 +753,8 @@ def search_page(
     year: str | None = None,
     library_id=None,
     subject_id=None,
+    search_field: str | None = None,
+    semantic_matches: list[Mapping[str, Any]] | None = None,
 ) -> dict:
     """One stable keyset page, its exact total, and facets for the query."""
 
@@ -688,6 +767,7 @@ def search_page(
             "has_more": False,
             "next_cursor": None,
             "facets": {name: [] for name in ("work_type", "language", "year", "library", "subject")},
+            "institutions": [],
         }
 
     filters = {
@@ -696,22 +776,43 @@ def search_page(
         "year": year,
         "library_id": library_id,
         "subject_id": subject_id,
+        "search_field": search_field,
+        "semantic_mode": semantic_matches is not None,
     }
     context = _cursor_context(normalized, filters)
     cursor_values = decode_cursor(cursor, context) if cursor else (None, None)
+    identifier_schemes = {
+        "isbn": "ISBN",
+        "issn": "ISSN",
+        "doi": "DOI",
+        "orcid": "ORCID",
+    }
+    semantic_matches = semantic_matches or []
     parameters = {
         "probe": normalized,
         "pattern": f"%{normalized}%",
+        "raw_pattern": f"%{probe.strip()}%",
+        "identifier_scheme": identifier_schemes.get(search_field),
+        "semantic_entity_ids": [uuid.UUID(str(match["entity_id"])) for match in semantic_matches],
+        "semantic_scores": [float(match["score"]) for match in semantic_matches],
         **filters,
     }
 
     cte = f"with matched as ({MATCHED_WORKS}), filtered as ({FILTERED_WORKS}) "
+
+    def typed_statement(sql: str) -> TextClause:
+        return text(sql).bindparams(
+            bindparam("semantic_entity_ids", type_=ARRAY(Uuid)),
+            bindparam("semantic_scores", type_=ARRAY(Float)),
+        )
+
     total = executor.execute(
-        text(cte + "select count(*) from filtered"),
+        typed_statement(cte + "select count(*) from filtered"),
         parameters,
     ).scalar() or 0
 
-    facet_rows = executor.execute(text(FACETS), parameters).mappings().all()
+    facet_rows = executor.execute(typed_statement(FACETS), parameters).mappings().all()
+    institution_rows = executor.execute(text(TENANT_TOTALS)).mappings().all()
     facets = {name: [] for name in ("work_type", "language", "year", "library", "subject")}
 
     for row in facet_rows:
@@ -722,7 +823,7 @@ def search_page(
         })
 
     page_rows = executor.execute(
-        text(
+        typed_statement(
             cte
             + "select f.work_id, f.score from filtered f "
             + "where (cast(:cursor_score as double precision) is null "
@@ -754,6 +855,10 @@ def search_page(
         "has_more": has_more,
         "next_cursor": next_cursor,
         "facets": facets,
+        "institutions": [
+            {"value": row["value"], "label": row["label"], "count": row["count"]}
+            for row in institution_rows
+        ],
     }
 
 

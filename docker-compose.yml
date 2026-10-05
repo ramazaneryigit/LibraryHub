@@ -47,6 +47,46 @@ services:
         condition: service_healthy
 
 
+  qdrant:
+    image: qdrant/qdrant:v1.13.6
+    container_name: libraryhub-qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  semantic:
+    build:
+      context: ./backend/semantic
+    container_name: libraryhub-semantic
+    restart: unless-stopped
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      MODEL_CACHE: /models
+      SEMANTIC_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+    volumes:
+      - semantic_model_cache:/models
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/health', timeout=3).status == 200 else 1)
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 180s
+    depends_on:
+      qdrant:
+        condition: service_healthy
   api:
     build:
       context: ./backend
@@ -61,6 +101,7 @@ services:
       # Runtime credential: a non-superuser role, so row level security on the
       # tenant schema actually applies.
       APP_DATABASE_URL: postgresql+psycopg://${APP_DB_USER}:${APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      SEMANTIC_SEARCH_URL: http://semantic:8001
 
     ports:
       - "8010:8000"
@@ -93,6 +134,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      semantic:
+        condition: service_healthy
 
   # The outbox consumer, on its own rather than in a thread inside the API.
   #
@@ -119,6 +162,7 @@ services:
       # grows until it fails.
       LIBRARYHUB_WORKER_INTERVAL: "5"
       LIBRARYHUB_WORKER_BATCH: "1000"
+      SEMANTIC_SEARCH_URL: http://semantic:8001
 
     volumes:
       - ./backend:/app
@@ -138,7 +182,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      semantic:
+        condition: service_healthy
 
 
 volumes:
   postgres_data:
+  qdrant_data:
+  semantic_model_cache:
